@@ -1,0 +1,55 @@
+{
+  "graph_id": "retry-demo",
+  "version": "0.1",
+  "root": "task_flaky",
+  "defaults": {
+    "budget": {
+      "max_time_ms": 1500,
+      "max_tokens": 300,
+      "max_retries": 1
+    }
+  },
+  "tasks": [
+    {
+      "id": "task_flaky",
+      "type": "det.flaky",
+      "deps": [],
+      "in": {
+        "message": "this input is ignored by flaky_once"
+      },
+      "run": {
+        "kind": "det",
+        "spec": {
+          "handler": "flaky_once",
+          "args": {}
+        }
+      },
+      "verify": {
+        "schema": {
+          "type": "object",
+          "required": ["status", "task_id", "message"],
+          "properties": {
+            "status": {"type": "string"},
+            "task_id": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "rules": [
+          {
+            "kind": "required",
+            "paths": ["status", "task_id", "message"]
+          }
+        ]
+      },
+      "policy": {
+        "budget": {
+          "max_time_ms": 1500,
+          "max_tokens": 300,
+          "max_retries": 1
+        },
+        "on_fail": "retry"
+      },
+      "tags": ["demo", "retry"]
+    }
+  ]
+}

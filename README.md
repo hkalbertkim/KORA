@@ -5,11 +5,11 @@ KORA is a Python-first orchestration scaffold for task-graph execution, budgetin
 ## Quickstart
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-python examples/hello_kora/run.py
-pytest
+python3 -m pip install -e ".[dev]"
+python3 examples/hello_kora/run.py
+python3 -m pytest -q
 ```
 
 ## License

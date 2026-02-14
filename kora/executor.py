@@ -5,11 +5,26 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
+from kora.adapters.base import BaseAdapter
+from kora.adapters.openai_adapter import OpenAIAdapter
 from kora.scheduler import get_task_map, topo_sort
 from kora.task_ir import Task, TaskGraph
 from kora.verification import verify_output
 
 Handler = Callable[[Task, dict[str, Any]], dict[str, Any]]
+
+
+class _AdapterRegistry:
+    providers: dict[str, type[BaseAdapter]] = {
+        "openai": OpenAIAdapter,
+    }
+
+    @classmethod
+    def get(cls, name: str) -> BaseAdapter:
+        adapter_cls = cls.providers.get(name)
+        if adapter_cls is None:
+            raise ValueError(f"unknown llm adapter: {name}")
+        return adapter_cls()
 
 
 def _handle_echo(task: Task, state: dict[str, Any]) -> dict[str, Any]:
@@ -22,6 +37,21 @@ def _handle_echo(task: Task, state: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "task_id": task.id,
         "message": message,
+    }
+
+
+def _handle_classify_simple(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    del state
+    text = task.in_.get("text")
+    if text is None and task.run.kind == "det":
+        text = task.run.spec.args.get("text", "")
+    if not isinstance(text, str):
+        text = str(text)
+
+    return {
+        "status": "ok",
+        "task_id": task.id,
+        "is_simple": len(text) < 80,
     }
 
 
@@ -42,6 +72,7 @@ def _handle_flaky_once(task: Task, state: dict[str, Any]) -> dict[str, Any]:
 
 DETERMINISTIC_HANDLERS: dict[str, Handler] = {
     "echo": _handle_echo,
+    "classify_simple": _handle_classify_simple,
     "flaky_once": _handle_flaky_once,
 }
 
@@ -58,6 +89,55 @@ def _run_det_task(task: Task, state: dict[str, Any]) -> dict[str, Any]:
     return handler(task, state)
 
 
+def _skip_if_matches(task: Task, outputs: dict[str, dict[str, Any]]) -> bool:
+    if task.run.kind != "llm":
+        return False
+
+    skip_if = task.run.spec.input.get("skip_if")
+    if not isinstance(skip_if, dict):
+        return False
+
+    raw_path = str(skip_if.get("path", ""))
+    expected = skip_if.get("equals")
+    key = raw_path[2:] if raw_path.startswith("$.") else raw_path
+    if not key:
+        return False
+
+    for dep_id in task.deps:
+        dep_output = outputs.get(dep_id, {})
+        if dep_output.get(key) == expected:
+            return True
+
+    return False
+
+
+def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if task.run.kind != "llm":
+        raise ValueError(f"task '{task.id}' is not an llm task")
+
+    adapter = _AdapterRegistry.get(task.run.spec.adapter)
+    adapter_input = dict(task.run.spec.input)
+    adapter_input.pop("skip_if", None)
+
+    budget = task.policy.budget.model_dump() if task.policy.budget is not None else {}
+    result = adapter.run(
+        task_id=task.id,
+        input=adapter_input,
+        budget=budget,
+        output_schema=task.run.spec.output_schema,
+    )
+
+    if not result.get("ok"):
+        raise ValueError(str(result.get("error", "adapter returned ok=false")))
+
+    output = result.get("output")
+    if not isinstance(output, dict):
+        raise ValueError("adapter output must be a JSON object")
+
+    verify_output(task, output)
+    return output, result
+
+
 def run_graph(graph: TaskGraph) -> dict[str, Any]:
     """Execute a normalized task graph and return task/final outputs."""
     order = topo_sort(graph)
@@ -69,9 +149,6 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
     for task_id in order:
         task = task_map[task_id]
 
-        if task.run.kind != "det":
-            raise NotImplementedError(f"run.kind '{task.run.kind}' not implemented in v0.1")
-
         retries = task.policy.budget.max_retries if task.policy.budget is not None else 0
         max_attempts = 1 + max(0, retries)
         attempt = 0
@@ -80,38 +157,74 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
             attempt += 1
             start = time.monotonic()
             try:
-                output = _run_det_task(task, state)
-                verify_output(task, output)
-                outputs[task.id] = output
-                elapsed_ms = int((time.monotonic() - start) * 1000)
-                events.append(
-                    {
-                        "task_id": task.id,
-                        "attempt": attempt,
-                        "status": "ok",
-                        "time_ms": elapsed_ms,
-                    }
-                )
-                break
+                if task.run.kind == "det":
+                    output = _run_det_task(task, state)
+                    verify_output(task, output)
+                    outputs[task.id] = output
+                    events.append(
+                        {
+                            "task_id": task.id,
+                            "attempt": attempt,
+                            "status": "ok",
+                            "time_ms": int((time.monotonic() - start) * 1000),
+                        }
+                    )
+                    break
+
+                if task.run.kind == "llm":
+                    if _skip_if_matches(task, outputs):
+                        output = {
+                            "status": "ok",
+                            "task_id": task.id,
+                            "skipped": True,
+                            "message": "Skipped due to skip_if condition",
+                        }
+                        outputs[task.id] = output
+                        events.append(
+                            {
+                                "task_id": task.id,
+                                "attempt": attempt,
+                                "status": "ok",
+                                "time_ms": int((time.monotonic() - start) * 1000),
+                                "skipped": True,
+                            }
+                        )
+                        break
+
+                    output, adapter_result = _run_llm_task(task, outputs)
+                    outputs[task.id] = output
+                    events.append(
+                        {
+                            "task_id": task.id,
+                            "attempt": attempt,
+                            "status": "ok",
+                            "time_ms": int((time.monotonic() - start) * 1000),
+                            "usage": adapter_result.get("usage", {}),
+                            "meta": adapter_result.get("meta", {}),
+                        }
+                    )
+                    break
+
+                raise NotImplementedError(f"run.kind '{task.run.kind}' not implemented in v0.1")
+
             except ValueError as exc:
-                elapsed_ms = int((time.monotonic() - start) * 1000)
                 events.append(
                     {
                         "task_id": task.id,
                         "attempt": attempt,
                         "status": "fail",
                         "error": str(exc),
-                        "time_ms": elapsed_ms,
+                        "time_ms": int((time.monotonic() - start) * 1000),
                     }
                 )
                 if task.policy.on_fail == "retry" and attempt < max_attempts:
                     continue
                 if task.policy.on_fail == "escalate":
                     raise ValueError(
-                        f"ESCALATE_REQUIRED: task '{task.id}' verification failed: {exc}"
+                        f"ESCALATE_REQUIRED: task '{task.id}' execution failed: {exc}"
                     ) from exc
                 raise ValueError(
-                    f"task '{task.id}' failed verification after {attempt} attempt(s): {exc}"
+                    f"task '{task.id}' failed after {attempt} attempt(s): {exc}"
                 ) from exc
 
     final_output = outputs[graph.root]

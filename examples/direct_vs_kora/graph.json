@@ -1,0 +1,106 @@
+{
+  "graph_id": "direct-vs-kora",
+  "version": "0.1",
+  "root": "task_llm",
+  "defaults": {
+    "budget": {
+      "max_time_ms": 3000,
+      "max_tokens": 400,
+      "max_retries": 1
+    }
+  },
+  "tasks": [
+    {
+      "id": "task_pre",
+      "type": "det.classify_simple",
+      "deps": [],
+      "in": {
+        "text": "Summarize this short question."
+      },
+      "run": {
+        "kind": "det",
+        "spec": {
+          "handler": "classify_simple",
+          "args": {
+            "text": "Summarize this short question."
+          }
+        }
+      },
+      "verify": {
+        "schema": {
+          "type": "object",
+          "required": ["status", "task_id", "is_simple"],
+          "properties": {
+            "status": {"type": "string"},
+            "task_id": {"type": "string"},
+            "is_simple": {"type": "boolean"}
+          }
+        },
+        "rules": [
+          {
+            "kind": "required",
+            "paths": ["status", "task_id", "is_simple"]
+          }
+        ]
+      },
+      "policy": {
+        "on_fail": "fail"
+      },
+      "tags": ["demo", "precheck"]
+    },
+    {
+      "id": "task_llm",
+      "type": "llm.answer",
+      "deps": ["task_pre"],
+      "in": {},
+      "run": {
+        "kind": "llm",
+        "spec": {
+          "adapter": "openai",
+          "input": {
+            "question": "Summarize this short question.",
+            "skip_if": {
+              "path": "$.is_simple",
+              "equals": true
+            }
+          },
+          "output_schema": {
+            "type": "object",
+            "required": ["status", "task_id", "answer"],
+            "properties": {
+              "status": {"type": "string"},
+              "task_id": {"type": "string"},
+              "answer": {"type": "string"}
+            }
+          }
+        }
+      },
+      "verify": {
+        "schema": {
+          "type": "object",
+          "required": ["status", "task_id", "answer"],
+          "properties": {
+            "status": {"type": "string"},
+            "task_id": {"type": "string"},
+            "answer": {"type": "string"}
+          }
+        },
+        "rules": [
+          {
+            "kind": "required",
+            "paths": ["status", "task_id", "answer"]
+          }
+        ]
+      },
+      "policy": {
+        "budget": {
+          "max_time_ms": 3000,
+          "max_tokens": 400,
+          "max_retries": 1
+        },
+        "on_fail": "retry"
+      },
+      "tags": ["demo", "llm"]
+    }
+  ]
+}

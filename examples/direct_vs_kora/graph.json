@@ -70,7 +70,24 @@
             "properties": {
               "status": {"type": "string"},
               "task_id": {"type": "string"},
-              "answer": {"type": "string"}
+              "answer": {
+                "anyOf": [
+                  {"type": "string"},
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["summary", "benefits"],
+                    "properties": {
+                      "summary": {"type": "string"},
+                      "benefits": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "additionalItems": false
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         }
@@ -82,7 +99,24 @@
           "properties": {
             "status": {"type": "string"},
             "task_id": {"type": "string"},
-            "answer": {"type": "string"}
+            "answer": {
+              "anyOf": [
+                {"type": "string"},
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["summary", "benefits"],
+                  "properties": {
+                    "summary": {"type": "string"},
+                    "benefits": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "additionalItems": false
+                    }
+                  }
+                }
+              ]
+            }
           }
         },
         "rules": [

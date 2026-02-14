@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -10,6 +11,40 @@ from typing import Any
 import requests
 
 from .base import BaseAdapter
+
+
+def harden_schema_for_openai(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep-copied schema hardened for OpenAI structured outputs."""
+    hardened = copy.deepcopy(schema)
+
+    if not isinstance(hardened, dict):
+        return hardened
+
+    schema_type = hardened.get("type")
+    if schema_type == "object":
+        if "additionalProperties" not in hardened:
+            hardened["additionalProperties"] = False
+
+        properties = hardened.get("properties")
+        if isinstance(properties, dict):
+            hardened["properties"] = {
+                key: harden_schema_for_openai(value)
+                for key, value in properties.items()
+            }
+
+    if schema_type == "array" and "items" in hardened:
+        items = hardened["items"]
+        if isinstance(items, dict):
+            hardened["items"] = harden_schema_for_openai(items)
+        elif isinstance(items, list):
+            hardened["items"] = [harden_schema_for_openai(item) for item in items]
+
+    for key in ("anyOf", "oneOf", "allOf"):
+        value = hardened.get(key)
+        if isinstance(value, list):
+            hardened[key] = [harden_schema_for_openai(item) for item in value]
+
+    return hardened
 
 
 class OpenAIAdapter(BaseAdapter):
@@ -40,6 +75,7 @@ class OpenAIAdapter(BaseAdapter):
 
         timeout_seconds = max(float(budget.get("max_time_ms", 1500)) / 1000.0, 0.1)
         max_tokens = int(budget.get("max_tokens", 300))
+        hardened_schema = harden_schema_for_openai(output_schema)
 
         prompt_payload = {
             "task_id": task_id,
@@ -68,7 +104,7 @@ class OpenAIAdapter(BaseAdapter):
                 "format": {
                     "type": "json_schema",
                     "name": "kora_output",
-                    "schema": output_schema,
+                    "schema": hardened_schema,
                     "strict": True,
                 }
             },

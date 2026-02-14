@@ -7,21 +7,18 @@ import os
 from pathlib import Path
 from typing import Any
 
-from kora.adapters.openai_adapter import OpenAIAdapter
+from kora.adapters.openai_adapter import OpenAIAdapter, harden_schema_for_openai
 from kora.executor import run_graph
 from kora.task_ir import TaskGraph, normalize_graph, validate_graph
 
 
-def run_direct(query: str) -> dict[str, Any]:
-    schema = {
-        "type": "object",
-        "required": ["status", "task_id", "answer"],
-        "properties": {
-            "status": {"type": "string"},
-            "task_id": {"type": "string"},
-            "answer": {"type": "string"},
-        },
-    }
+def _load_direct_vs_kora_graph_data() -> dict[str, Any]:
+    graph_path = Path(__file__).with_name("graph.json")
+    return json.loads(graph_path.read_text(encoding="utf-8"))
+
+
+def run_direct(query: str, llm_output_schema: dict[str, Any]) -> dict[str, Any]:
+    hardened_schema = harden_schema_for_openai(llm_output_schema)
 
     if not os.getenv("OPENAI_API_KEY"):
         return {
@@ -37,7 +34,7 @@ def run_direct(query: str) -> dict[str, Any]:
         task_id="direct_call",
         input={"question": query},
         budget={"max_time_ms": 3000, "max_tokens": 400},
-        output_schema=schema,
+        output_schema=hardened_schema,
     )
 
     return {
@@ -50,8 +47,7 @@ def run_direct(query: str) -> dict[str, Any]:
 
 
 def run_kora(query: str) -> dict[str, Any]:
-    graph_path = Path(__file__).with_name("graph.json")
-    graph_data = json.loads(graph_path.read_text(encoding="utf-8"))
+    graph_data = _load_direct_vs_kora_graph_data()
 
     graph_data["tasks"][0]["in"]["text"] = query
     graph_data["tasks"][0]["run"]["spec"]["args"]["text"] = query
@@ -81,8 +77,10 @@ def run_kora(query: str) -> dict[str, Any]:
 
 def main() -> None:
     query = "Summarize this short question."
+    graph_data = _load_direct_vs_kora_graph_data()
+    llm_schema = graph_data["tasks"][1]["run"]["spec"]["output_schema"]
 
-    direct_result = run_direct(query)
+    direct_result = run_direct(query, llm_schema)
     kora_result = run_kora(query)
 
     summary = {

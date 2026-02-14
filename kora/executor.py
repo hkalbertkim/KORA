@@ -6,6 +6,7 @@ import time
 from typing import Any, Callable
 
 from kora.adapters.base import BaseAdapter
+from kora.adapters.mock import MockAdapter
 from kora.adapters.openai_adapter import OpenAIAdapter
 from kora.scheduler import get_task_map, topo_sort
 from kora.task_ir import Task, TaskGraph
@@ -17,6 +18,7 @@ Handler = Callable[[Task, dict[str, Any]], dict[str, Any]]
 class _AdapterRegistry:
     providers: dict[str, type[BaseAdapter]] = {
         "openai": OpenAIAdapter,
+        "mock": MockAdapter,
     }
 
     @classmethod

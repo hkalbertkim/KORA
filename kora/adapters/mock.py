@@ -18,10 +18,19 @@ class MockAdapter(BaseAdapter):
         budget: dict[str, Any],
         output_schema: dict[str, Any],
     ) -> dict[str, Any]:
-        del input, budget, output_schema
+        del budget, output_schema
+        question = str(input.get("question", ""))
         return {
             "ok": True,
-            "output": {"status": "ok", "task_id": task_id},
-            "usage": {"time_ms": 0, "tokens_in": 0, "tokens_out": 0},
+            "output": {
+                "status": "ok",
+                "task_id": task_id,
+                "answer": f"Mock answer for: {question[:80]}",
+            },
+            "usage": {
+                "time_ms": 25,
+                "tokens_in": max(1, len(question) // 4),
+                "tokens_out": 40,
+            },
             "meta": {"adapter": "mock", "model": "mock-v0"},
         }

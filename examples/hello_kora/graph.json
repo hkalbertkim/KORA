@@ -1,11 +1,12 @@
 {
   "graph_id": "hello-kora",
-  "version": "v0.1-min",
+  "version": "0.1",
   "root": "task_echo",
   "defaults": {
     "budget": {
-      "tokens": 2000,
-      "usd": 0.10
+      "max_time_ms": 1500,
+      "max_tokens": 300,
+      "max_retries": 1
     }
   },
   "tasks": [
@@ -17,26 +18,38 @@
         "message": "hello from kora"
       },
       "run": {
-        "kind": "adapter",
+        "kind": "det",
         "spec": {
-          "adapter": "mock"
+          "handler": "echo",
+          "args": {
+            "message": "hello from kora"
+          }
         }
       },
       "verify": {
         "schema": {
           "type": "object",
-          "required": ["status", "task_id"]
+          "required": ["status", "task_id", "message"],
+          "properties": {
+            "status": {"type": "string"},
+            "task_id": {"type": "string"},
+            "message": {"type": "string"}
+          }
         },
         "rules": [
-          "status == 'ok'"
+          {
+            "kind": "required",
+            "paths": ["status", "task_id", "message"]
+          }
         ]
       },
       "policy": {
         "budget": {
-          "tokens": 200,
-          "usd": 0.01
+          "max_time_ms": 1500,
+          "max_tokens": 300,
+          "max_retries": 1
         },
-        "on_fail": "halt"
+        "on_fail": "fail"
       },
       "tags": ["demo", "v0.1"]
     }

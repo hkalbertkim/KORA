@@ -1,0 +1,44 @@
+{
+  "graph_id": "hello-kora",
+  "version": "v0.1-min",
+  "root": "task_echo",
+  "defaults": {
+    "budget": {
+      "tokens": 2000,
+      "usd": 0.10
+    }
+  },
+  "tasks": [
+    {
+      "id": "task_echo",
+      "type": "io.echo",
+      "deps": [],
+      "in": {
+        "message": "hello from kora"
+      },
+      "run": {
+        "kind": "adapter",
+        "spec": {
+          "adapter": "mock"
+        }
+      },
+      "verify": {
+        "schema": {
+          "type": "object",
+          "required": ["status", "task_id"]
+        },
+        "rules": [
+          "status == 'ok'"
+        ]
+      },
+      "policy": {
+        "budget": {
+          "tokens": 200,
+          "usd": 0.01
+        },
+        "on_fail": "halt"
+      },
+      "tags": ["demo", "v0.1"]
+    }
+  ]
+}

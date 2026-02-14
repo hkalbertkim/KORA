@@ -21,3 +21,25 @@ def test_harden_schema_adds_additional_properties_false_recursively() -> None:
     assert "additionalProperties" not in input_schema
     assert hardened["additionalProperties"] is False
     assert hardened["properties"]["meta"]["additionalProperties"] is False
+
+
+def test_harden_schema_adds_additional_properties_for_array_items() -> None:
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
+    hardened = harden_schema_for_openai(input_schema)
+
+    assert hardened["additionalProperties"] is False
+    assert hardened["properties"]["items"]["items"]["additionalProperties"] is False

@@ -17,7 +17,7 @@ def _load_direct_vs_kora_graph_data() -> dict[str, Any]:
     return json.loads(graph_path.read_text(encoding="utf-8"))
 
 
-def run_direct(query: str, llm_output_schema: dict[str, Any]) -> dict[str, Any]:
+def run_direct(query: str, llm_output_schema: dict[str, Any], llm_budget: dict[str, Any]) -> dict[str, Any]:
     hardened_schema = harden_schema_for_openai(llm_output_schema)
 
     if not os.getenv("OPENAI_API_KEY"):
@@ -33,7 +33,7 @@ def run_direct(query: str, llm_output_schema: dict[str, Any]) -> dict[str, Any]:
     result = adapter.run(
         task_id="direct_call",
         input={"question": query},
-        budget={"max_time_ms": 3000, "max_tokens": 400},
+        budget=llm_budget,
         output_schema=hardened_schema,
     )
 
@@ -79,8 +79,9 @@ def main() -> None:
     query = "Summarize this short question."
     graph_data = _load_direct_vs_kora_graph_data()
     llm_schema = graph_data["tasks"][1]["run"]["spec"]["output_schema"]
+    llm_budget = graph_data["tasks"][1]["policy"]["budget"]
 
-    direct_result = run_direct(query, llm_schema)
+    direct_result = run_direct(query, llm_schema, llm_budget)
     kora_result = run_kora(query)
 
     summary = {

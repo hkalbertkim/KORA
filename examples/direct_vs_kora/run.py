@@ -9,7 +9,7 @@ from typing import Any
 
 from kora.adapters.mock import MockAdapter
 from kora.adapters.openai_adapter import OpenAIAdapter, harden_schema_for_openai
-from kora.executor import run_graph
+from kora.executor import normalize_answer_json_string, run_graph
 from kora.task_ir import TaskGraph, normalize_graph, validate_graph
 
 SHORT_TEXT = "Summarize this short question."
@@ -66,7 +66,7 @@ def _run_direct_case(case_text: str, graph_data: dict[str, Any], offline: bool) 
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "error": result.get("error"),
-        "output": result.get("output", {}),
+        "output": normalize_answer_json_string(result.get("output", {})),
         "model": result.get("meta", {}).get("model", OpenAIAdapter().model),
     }
 

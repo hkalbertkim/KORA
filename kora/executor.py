@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Callable
 
@@ -79,6 +80,29 @@ DETERMINISTIC_HANDLERS: dict[str, Handler] = {
 }
 
 
+def normalize_answer_json_string(output: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort conversion of JSON-string answers into structured JSON."""
+    answer = output.get("answer")
+    if not isinstance(answer, str):
+        return output
+
+    trimmed = answer.lstrip()
+    if not (trimmed.startswith("{") or trimmed.startswith("[")):
+        return output
+
+    try:
+        parsed = json.loads(answer)
+    except json.JSONDecodeError:
+        return output
+
+    if not isinstance(parsed, (dict, list)):
+        return output
+
+    normalized = dict(output)
+    normalized["answer"] = parsed
+    return normalized
+
+
 def _run_det_task(task: Task, state: dict[str, Any]) -> dict[str, Any]:
     if task.run.kind != "det":
         raise ValueError(f"task '{task.id}' is not deterministic")
@@ -136,6 +160,7 @@ def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[
     if not isinstance(output, dict):
         raise ValueError("adapter output must be a JSON object")
 
+    output = normalize_answer_json_string(output)
     verify_output(task, output)
     return output, result
 

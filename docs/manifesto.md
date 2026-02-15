@@ -1,17 +1,172 @@
-# KORA Manifesto
+# The KORA Manifesto
 
-LLMs should not be called by default.
+Modern AI systems reason too easily.
 
-Intelligence must be structured before it is scaled.
+Every request becomes a prompt.
+Every prompt becomes inference.
+Every inference becomes cost.
 
-Inference should be bounded.
-Execution should be deterministic when possible.
-Outputs must be verifiable.
+This is convenient.
 
-KORA exists to shift AI from
-"always infer"
-to
-"infer only when necessary."
+It is not disciplined.
 
-Structure first.
-Inference second.
+---
+
+## 1. We Reject Inference Reflex
+
+Intelligence does not mean invoking a model.
+
+We reject the assumption that every input deserves probabilistic reasoning.
+
+Some problems are structural.
+Some problems are deterministic.
+Some problems require no model at all.
+
+**Reason only when necessary.**
+
+---
+
+## 2. We Believe Structure Precedes Scale
+
+Scaling inference without structure amplifies fragility.
+
+More tokens.
+More latency.
+More centralization.
+More opacity.
+
+Structure introduces boundaries.
+
+Boundaries introduce control.
+
+Control makes intelligence sustainable.
+
+**Structure first. Scale second.**
+
+---
+
+## 3. We Decompose by Default
+
+Monolithic prompts hide structure.
+
+Hidden structure cannot be governed.
+
+We make structure explicit.
+
+Every complex request must be decomposed into atomic tasks.
+
+Reasoning is not eliminated.
+It is isolated.
+
+Isolation enables clarity.
+Clarity enables discipline.
+
+---
+
+## 4. We Treat Budget as Contract
+
+Unbounded inference is architectural negligence.
+
+Every model call must be constrained.
+
+- Tokens are finite.
+- Time is finite.
+- Retries are finite.
+
+Inference is powerful.
+Power must be bounded.
+
+---
+
+## 5. We Validate Before We Trust
+
+Model output is probabilistic.
+
+Trust must be earned through structure.
+
+Every output must satisfy explicit schema.
+Every task must be verifiable.
+Every failure must be visible.
+
+No silent drift.
+No implicit trust.
+
+---
+
+## 6. We Refuse Hardware Absolutism
+
+Compute is substrate, not authority.
+
+Intelligence must not depend on a single hardware class.
+
+CPU is first-class.
+Small models are first-class.
+Distributed nodes are first-class.
+
+Heterogeneity is not weakness.
+It is resilience.
+
+---
+
+## 7. We Design for Measurability
+
+Claims must be falsifiable.
+
+If decomposition does not reduce invocation, we measure it.
+If overhead exceeds savings, we acknowledge it.
+If structure fails under scale, we revise it.
+
+Architecture must survive experiment.
+
+---
+
+## 8. We Separate Convenience from Discipline
+
+Reflexive systems are easier to build.
+
+Structured systems are harder to erode.
+
+Convenience scales quickly.
+Discipline scales safely.
+
+We choose discipline.
+
+---
+
+## 9. We Build for the Long Term
+
+Models will grow larger.
+Tokens will grow cheaper.
+Hardware will evolve.
+
+Structure remains relevant.
+
+When models become stronger, discipline becomes more important, not less.
+
+---
+
+## 10. We Do Not Compete on Model Size
+
+KORA does not attempt to outscale models.
+
+It governs their invocation.
+
+It is not another model.
+
+It is an execution architecture.
+
+---
+
+## Closing Statement
+
+KORA is a refusal.
+
+A refusal to treat intelligence as reflex.
+A refusal to scale without structure.
+A refusal to centralize by default.
+
+It is a commitment to discipline in execution.
+
+**Reason deliberately.  
+Structure explicitly.  
+Scale responsibly.**

@@ -9,11 +9,9 @@
 ## 1. The Structural Problem
 
 Modern AI systems are built around inference.
-
 When a request arrives, the default action is to invoke a large model.
 
-This pattern is not accidental.
-It is structural.
+This pattern is not accidental. It is structural.
 
 Most LLM-based systems are *inference-reflexive*:
 they treat model invocation as the first step rather than the last.
@@ -86,7 +84,6 @@ This transforms inference into:
 > A contractual service call
 
 rather than an implicit system assumption.
-
 Budget discipline introduces:
 
 - Cost predictability
@@ -116,8 +113,7 @@ Trust is validated.
 
 ## 6. From Engine to Execution Fabric
 
-KORA begins as an inference-minimization engine.
-
+KORA begins as an inference-minimization engine. 
 It evolves toward a distributed execution fabric.
 
 ### Phase 1 — Inference Minimization
@@ -169,9 +165,7 @@ It is architectural.
 ## 8. Naming: Why “KORA”
 
 The name KORA is structural, not decorative.
-
 The Kora is a traditional West African instrument:
-
 https://en.wikipedia.org/wiki/Kora_(instrument)
 
 It does not have a rigid industrial standard.
@@ -192,7 +186,6 @@ There is structural coherence.
 ### Heterogeneous Compute as Instrument
 
 KORA follows the same principle.
-
 It uses whatever systems exist:
 
 - CPUs
@@ -229,9 +222,7 @@ It requires structure.
 ## 9. Decomposition-Native Future
 
 KORA does not currently train foundation models.
-
 However, its architecture lays the groundwork for:
-
 Decomposition-Native Foundation Models (DNFM)
 
 Where:

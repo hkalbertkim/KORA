@@ -116,22 +116,22 @@ Trust is validated.
 KORA begins as an inference-minimization engine. 
 It evolves toward a distributed execution fabric.
 
-### Phase 1 — Inference Minimization
+### Phase 1 - Inference Minimization
 Skip trivial requests.
 Enforce budget discipline.
 
-### Phase 2 — Explicit Task Decomposition
+### Phase 2 - Explicit Task Decomposition
 Split complex requests into atomic subtasks.
 Combine deterministic and inference steps.
 
-### Phase 3 — Distributed Routing
+### Phase 3 - Distributed Routing
 Route subtasks across heterogeneous systems:
 - CPUs
 - Small local models
 - Cloud LLMs
 - Edge devices
 
-### Phase 4 — Compute Neutrality
+### Phase 4 - Compute Neutrality
 Enable AI execution in resource-constrained environments.
 
 ---

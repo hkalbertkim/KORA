@@ -39,16 +39,16 @@ KORA introduces execution discipline.
 
 KORA evolves in phases:
 
-### Phase 1 — Inference Minimization (current)
+### Phase 1 - Inference Minimization (current)
 Reduce unnecessary LLM calls.
 
-### Phase 2 — Task Decomposition
+### Phase 2 - Task Decomposition
 Split large requests into atomic subtasks.
 
-### Phase 3 — Distributed Routing
+### Phase 3 - Distributed Routing
 Route subtasks across heterogeneous systems.
 
-### Phase 4 — Compute-Neutral AI
+### Phase 4 - Compute-Neutral AI
 Enable AI execution in CPU-only and resource-constrained environments.
 
 ---

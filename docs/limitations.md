@@ -2,9 +2,7 @@
 
 KORA is not universally superior.
 
-Its advantages depend on structural conditions. <br>
-This document outlines the architectural, economic, <br>
-and practical limitations of the system.
+Its advantages depend on structural conditions. This document outlines the architectural, economic, and practical limitations of the system.
 
 ---
 
@@ -39,12 +37,9 @@ KORA introduces additional processing:
 
 Let O represent structural overhead per request.
 
-If:
+If:  P * C_m <= O
 
-P * C_m <= O
-
-where P is deterministic proportion and C_m is model cost,
-<br>then KORA does not provide economic benefit.
+where P is deterministic proportion and C_m is model cost, then KORA does not provide economic benefit.
 
 Overhead must remain controlled.
 
@@ -60,9 +55,7 @@ In environments where:
 - Request complexity is minimal
 - Latency requirements are sub-millisecond
 
-the structural layer may introduce measurable delay.
-
-KORA prioritizes discipline over micro-optimization.
+the structural layer may introduce measurable delay. KORA prioritizes discipline over micro-optimization.
 
 ---
 

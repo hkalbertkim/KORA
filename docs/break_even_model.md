@@ -1,35 +1,54 @@
 # Break-Even Model
 
-KORA reduces inference calls.
+KORA reduces unnecessary inference calls.
 
-Let:
+To formalize this, define:
 
-C = cost per LLM call  
-P = proportion of trivial requests  
-T = total requests  
+| Symbol | Meaning                          |
+|--------|----------------------------------|
+| C      | Cost per LLM call                |
+| P      | Proportion of trivial requests   |
+| T      | Total number of requests         |
 
-Direct cost = C × T  
-KORA cost = C × (1 - P) × T  
+---
 
-Savings = C × P × T
+## Cost Model
+
+| Scenario | Formula              |
+|----------|----------------------|
+| Direct   | C * T                |
+| KORA     | C * (1 - P) * T      |
+| Savings  | C * P * T            |
+
+---
+
+## Interpretation
+
+If P > 0.5, then more than half of all LLM calls are unnecessary.
+
+In such systems, KORA cuts cost proportionally to P.
 
 ---
 
 ## Real Benchmark Example
 
-Short + Long case:
+From v0.1-alpha benchmark:
 
-LLM Calls:
-Direct = 2
-KORA = 1
-
-Savings = 50%
+| Metric     | Direct | KORA | Reduction |
+|------------|--------|------|-----------|
+| LLM Calls  | 2      | 1    | -50%      |
+| Tokens In  | 359    | 225  | -37%      |
+| Tokens Out | 121    | 85   | -30%      |
 
 ---
 
-## Systemic Impact
+## Production Implication
 
-In production workloads where trivial requests dominate,
-P is often > 0.5.
+In workloads where trivial requests dominate:
 
-This implies significant operational cost reduction.
+If P approaches 0.6 - 0.8:
+
+- Direct systems scale linearly with inference cost.
+- KORA scales with structured execution cost plus bounded inference.
+
+This produces significant long-term operational savings.

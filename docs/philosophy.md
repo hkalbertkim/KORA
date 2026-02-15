@@ -162,7 +162,7 @@ It is architectural.
 
 ---
 
-## 8. Naming: Why “KORA”
+## 8. Naming: Why "KORA"
 
 The name KORA is structural, not decorative.
 

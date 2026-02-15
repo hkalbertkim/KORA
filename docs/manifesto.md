@@ -2,9 +2,9 @@
 
 Modern AI systems reason too easily.
 
-Every request becomes a prompt.
-Every prompt becomes inference.
-Every inference becomes cost.
+Every request becomes a prompt.<br>
+Every prompt becomes inference.<br>
+Every inference becomes cost.<br>
 
 This is convenient.
 
@@ -18,9 +18,9 @@ Intelligence does not mean invoking a model.
 
 We reject the assumption that every input deserves probabilistic reasoning.
 
-Some problems are structural.
-Some problems are deterministic.
-Some problems require no model at all.
+Some problems are structural.<br>
+Some problems are deterministic.<br>
+Some problems require no model at all.<br>
 
 **Reason only when necessary.**
 
@@ -30,16 +30,14 @@ Some problems require no model at all.
 
 Scaling inference without structure amplifies fragility.
 
-More tokens.
-More latency.
-More centralization.
-More opacity.
+More tokens.<br>
+More latency.<br>
+More centralization.<br>
+More opacity.<br>
 
-Structure introduces boundaries.
-
-Boundaries introduce control.
-
-Control makes intelligence sustainable.
+Structure introduces boundaries.<br>
+Boundaries introduce control.<br>
+Control makes intelligence sustainable.<br>
 
 **Structure first. Scale second.**
 
@@ -47,19 +45,17 @@ Control makes intelligence sustainable.
 
 ## 3. We Decompose by Default
 
-Monolithic prompts hide structure.
-
-Hidden structure cannot be governed.
+Monolithic prompts hide structure.<br>
+Hidden structure cannot be governed.<br>
 
 We make structure explicit.
 
 Every complex request must be decomposed into atomic tasks.
 
-Reasoning is not eliminated.
-It is isolated.
+Reasoning is not eliminated. It is isolated.<br>
 
-Isolation enables clarity.
-Clarity enables discipline.
+Isolation enables clarity.<br>
+Clarity enables discipline.<br>
 
 ---
 
@@ -80,16 +76,15 @@ Power must be bounded.
 
 ## 5. We Validate Before We Trust
 
-Model output is probabilistic.
-
+Model output is probabilistic.<br>
 Trust must be earned through structure.
 
-Every output must satisfy explicit schema.
-Every task must be verifiable.
-Every failure must be visible.
+Every output must satisfy explicit schema.<br>
+Every task must be verifiable.<br>
+Every failure must be visible.<br>
 
-No silent drift.
-No implicit trust.
+No silent drift.<br>
+No implicit trust.<br>
 
 ---
 

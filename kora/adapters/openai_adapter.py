@@ -50,7 +50,7 @@ def harden_schema_for_openai(schema: dict[str, Any]) -> dict[str, Any]:
 class OpenAIAdapter(BaseAdapter):
     """OpenAI Responses API adapter using requests."""
 
-    def __init__(self, model: str = "gpt-4.1-mini") -> None:
+    def __init__(self, model: str = "gpt-4o-mini") -> None:
         self.model = model
         self.endpoint = "https://api.openai.com/v1/responses"
 

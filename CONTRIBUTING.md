@@ -1,11 +1,13 @@
 # Contributing
 
-Thank you for your interest in KORA.
+KORA prioritizes:
 
-## Development setup
+- Minimalism
+- Determinism
+- Structured outputs
+- Measurable inference reduction
 
-TODO: Document local development workflow.
-
-## Pull requests
-
-TODO: Document contribution and review expectations.
+Before submitting:
+- Ensure tests pass
+- Avoid feature bloat
+- Preserve execution contracts

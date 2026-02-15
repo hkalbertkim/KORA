@@ -16,7 +16,7 @@
 
 ## Objective
 
-Evaluate KORA’s ability to reduce unnecessary inference while preserving capability for complex tasks.
+Evaluate KORA’s ability to reduce unnecessary inference while preserving the capability for complex tasks.
 
 ---
 
@@ -36,11 +36,11 @@ Two input cases:
 
 ### Short Case
 
-| Metric | Direct | KORA |
-|--------|--------|-------|
-| LLM Calls | 1 | 0 |
-| Tokens In | 135 | 0 |
-| Tokens Out | 41 | 0 |
+| Metric     | Direct | KORA |
+|------------|--------|------|
+| LLM Calls  | 1      | 0    |
+| Tokens In  | 135    | 0    |
+| Tokens Out | 41     | 0    |
 
 KORA avoided 100% of LLM usage.
 
@@ -48,11 +48,11 @@ KORA avoided 100% of LLM usage.
 
 ### Long Case
 
-| Metric | Direct | KORA |
-|--------|--------|-------|
-| LLM Calls | 1 | 1 |
-| Tokens In | 224 | 225 |
-| Tokens Out | 80 | 85 |
+| Metric     | Direct | KORA |
+|------------|--------|------|
+| LLM Calls  | 1      | 1    |
+| Tokens In  | 224    | 225  |
+| Tokens Out | 80     | 85   |
 
 KORA incurred negligible overhead due to structured validation.
 
@@ -60,11 +60,12 @@ KORA incurred negligible overhead due to structured validation.
 
 ## Aggregate
 
-| Metric | Direct | KORA | Delta |
-|--------|--------|-------|-------|
-| LLM Calls | 2 | 1 | -50% |
-| Tokens In | 359 | 225 | -37% |
-| Tokens Out | 121 | 85 | -30% |
+
+| Metric     | Direct | KORA | Delta |
+|------------|--------|------|-------|
+| LLM Calls  | 2      | 1    | -50%  |
+| Tokens In  | 359    | 225  | -37%  |
+| Tokens Out | 121    | 85   | -30%  |
 
 ---
 

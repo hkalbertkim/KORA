@@ -36,9 +36,9 @@ KORA introduces additional processing:
 - Telemetry emission
 
 Let O represent structural overhead per request.
-
+<br><br>
 If:  P * C_m <= O
-
+<br><br>
 where P is deterministic proportion and C_m is model cost, then KORA does not provide economic benefit.
 
 Overhead must remain controlled.

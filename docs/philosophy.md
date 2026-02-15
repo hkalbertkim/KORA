@@ -165,6 +165,7 @@ It is architectural.
 ## 8. Naming: Why “KORA”
 
 The name KORA is structural, not decorative.
+
 The Kora is a traditional West African instrument:
 https://en.wikipedia.org/wiki/Kora_(instrument)
 
@@ -204,9 +205,7 @@ Harmony emerges from orchestration.
 
 ### Cultural Resonance
 
-One of the most renowned Kora players,
-Toumani Diabaté:
-
+One of the most renowned Kora players, Toumani Diabaté:
 https://en.wikipedia.org/wiki/Toumani_Diabat%C3%A9
 
 demonstrated how an instrument constructed from simple materials

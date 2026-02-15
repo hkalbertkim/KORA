@@ -48,10 +48,8 @@ Control makes intelligence sustainable.<br>
 Monolithic prompts hide structure.<br>
 Hidden structure cannot be governed.<br>
 
-We make structure explicit.
-
-Every complex request must be decomposed into atomic tasks.
-
+We make structure explicit.<br>
+Every complex request must be decomposed into atomic tasks.<br>
 Reasoning is not eliminated. It is isolated.<br>
 
 Isolation enables clarity.<br>
@@ -69,7 +67,7 @@ Every model call must be constrained.
 - Time is finite.
 - Retries are finite.
 
-Inference is powerful.
+Inference is powerful.<br>
 Power must be bounded.
 
 ---
@@ -94,12 +92,12 @@ Compute is substrate, not authority.
 
 Intelligence must not depend on a single hardware class.
 
-CPU is first-class.
-Small models are first-class.
-Distributed nodes are first-class.
+CPU is first-class.<br>
+Small models are first-class.<br>
+Distributed nodes are first-class.<br>
 
-Heterogeneity is not weakness.
-It is resilience.
+Heterogeneity is not weakness.<br>
+It is resilience.<br>
 
 ---
 
@@ -107,9 +105,9 @@ It is resilience.
 
 Claims must be falsifiable.
 
-If decomposition does not reduce invocation, we measure it.
-If overhead exceeds savings, we acknowledge it.
-If structure fails under scale, we revise it.
+If decomposition does not reduce invocation, we measure it.<br>
+If overhead exceeds savings, we acknowledge it.<br>
+If structure fails under scale, we revise it.<br>
 
 Architecture must survive experiment.
 
@@ -117,12 +115,11 @@ Architecture must survive experiment.
 
 ## 8. We Separate Convenience from Discipline
 
-Reflexive systems are easier to build.
+Reflexive systems are easier to build.<br>
+Structured systems are harder to erode.<br>
 
-Structured systems are harder to erode.
-
-Convenience scales quickly.
-Discipline scales safely.
+Convenience scales quickly.<br>
+Discipline scales safely.<br>
 
 We choose discipline.
 
@@ -130,9 +127,9 @@ We choose discipline.
 
 ## 9. We Build for the Long Term
 
-Models will grow larger.
-Tokens will grow cheaper.
-Hardware will evolve.
+Models will grow larger.<br>
+Tokens will grow cheaper.<br>
+Hardware will evolve.<br>
 
 Structure remains relevant.
 
@@ -144,11 +141,9 @@ When models become stronger, discipline becomes more important, not less.
 
 KORA does not attempt to outscale models.
 
-It governs their invocation.
-
-It is not another model.
-
-It is an execution architecture.
+It governs their invocation.<br>
+It is not another model.<br>
+It is an execution architecture.<br>
 
 ---
 
@@ -156,9 +151,9 @@ It is an execution architecture.
 
 KORA is a refusal.
 
-A refusal to treat intelligence as reflex.
-A refusal to scale without structure.
-A refusal to centralize by default.
+A refusal to treat intelligence as reflex.<br>
+A refusal to scale without structure.<br>
+A refusal to centralize by default.<br>
 
 It is a commitment to discipline in execution.
 

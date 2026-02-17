@@ -73,3 +73,13 @@ Example snippet:
   }
 }
 ```
+
+## Measured Results (2026-02-17)
+
+| Request | Mode | total_llm_calls | tokens_in | tokens_out | total_time_ms |
+|---|---|---:|---:|---:|---:|
+| Long request | Direct | 1 | 187 | 205 | 5154 |
+| Long request | KORA | 1 | 188 | 187 | 4842 |
+
+- Long calls equal (1call), KORA reduces tokens_out by 18 and is 312ms faster in this run.
+- KORA provides structured events (stages) for observability; direct does not.

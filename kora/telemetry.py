@@ -97,7 +97,7 @@ def summarize_run(obj: dict[str, Any]) -> dict[str, Any]:
         if error.get("error_type") == "ESCALATE_REQUIRED":
             escalation_required += 1
 
-    return {
+    summary = {
         "ok": ok,
         "total_time_ms": total_time_ms,
         "total_llm_calls": total_llm_calls,
@@ -110,3 +110,73 @@ def summarize_run(obj: dict[str, Any]) -> dict[str, Any]:
         "budget_breaches": budget_breaches,
         "escalation_required": escalation_required,
     }
+    timestamp = obj.get("timestamp")
+    if isinstance(timestamp, str):
+        summary["timestamp"] = timestamp
+    error = obj.get("error")
+    if isinstance(error, dict):
+        summary["error"] = error
+    return summary
+
+
+def render_markdown_report(summary: dict[str, Any], *, source_path: str) -> str:
+    timestamp = summary.get("timestamp")
+    title = f"Telemetry Report ({timestamp})" if isinstance(timestamp, str) and timestamp else "Telemetry Report"
+
+    stage_rows = []
+    stage_counts = summary.get("stage_counts", {})
+    if isinstance(stage_counts, dict) and stage_counts:
+        for stage, count in sorted(stage_counts.items()):
+            stage_rows.append(f"| {stage} | {int(count)} |")
+    else:
+        stage_rows.append("| (none) | 0 |")
+
+    lines = [
+        f"# {title}",
+        "",
+        f"Input file: `{source_path}`",
+        "",
+        "## Summary",
+        "",
+        "| ok | total_time_ms | total_llm_calls | tokens_in | tokens_out |",
+        "|---|---:|---:|---:|---:|",
+        (
+            f"| {bool(summary.get('ok', False))} | {int(summary.get('total_time_ms', 0))} | "
+            f"{int(summary.get('total_llm_calls', 0))} | {int(summary.get('tokens_in', 0))} | "
+            f"{int(summary.get('tokens_out', 0))} |"
+        ),
+        "",
+        "## Events",
+        "",
+        f"- events_ok: {int(summary.get('events_ok', 0))}",
+        f"- events_fail: {int(summary.get('events_fail', 0))}",
+        f"- events_skipped: {int(summary.get('events_skipped', 0))}",
+        "",
+        "## Stage Counts",
+        "",
+        "| stage | count |",
+        "|---|---:|",
+        *stage_rows,
+        "",
+        "## Policy Signals",
+        "",
+        f"- budget_breaches: {int(summary.get('budget_breaches', 0))}",
+        f"- escalation_required: {int(summary.get('escalation_required', 0))}",
+    ]
+
+    if not bool(summary.get("ok", True)):
+        error = summary.get("error")
+        if isinstance(error, dict):
+            lines.extend(
+                [
+                    "",
+                    "## Failure",
+                    "",
+                    f"- error_type: {error.get('error_type', '')}",
+                    f"- stage: {error.get('stage', '')}",
+                    f"- details: {error.get('details', '')}",
+                    f"- task_id: {error.get('task_id', '')}",
+                ]
+            )
+
+    return "\n".join(lines) + "\n"

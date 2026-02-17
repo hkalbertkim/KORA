@@ -46,6 +46,9 @@ python3 -m kora telemetry --input docs/reports/real_app_benchmark.json
 By default, JSON output is written next to the input file as:
 `docs/reports/real_app_benchmark.telemetry.json`
 
+By default, Markdown report output is also written as:
+`docs/reports/real_app_benchmark.telemetry.md`
+
 ## Captured Metrics
 
 - `total_llm_calls`

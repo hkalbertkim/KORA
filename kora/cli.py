@@ -6,11 +6,15 @@ import argparse
 import json
 from pathlib import Path
 
-from kora.telemetry import load_json, summarize_run
+from kora.telemetry import load_json, render_markdown_report, summarize_run
 
 
 def _default_json_out(input_path: Path) -> Path:
     return input_path.with_name(f"{input_path.stem}.telemetry.json")
+
+
+def _default_md_out(input_path: Path) -> Path:
+    return input_path.with_name(f"{input_path.stem}.telemetry.md")
 
 
 def _print_summary(summary: dict) -> None:
@@ -40,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     telemetry_parser = subparsers.add_parser("telemetry", help="summarize a run JSON file")
     telemetry_parser.add_argument("--input", required=True, help="path to run/report JSON")
     telemetry_parser.add_argument("--json-out", help="output path for telemetry JSON")
+    telemetry_parser.add_argument("--md-out", help="output path for telemetry markdown report")
 
     args = parser.parse_args(argv)
 
@@ -48,9 +53,13 @@ def main(argv: list[str] | None = None) -> int:
         obj = load_json(input_path)
         summary = summarize_run(obj)
         json_out = Path(args.json_out) if args.json_out else _default_json_out(input_path)
+        md_out = Path(args.md_out) if args.md_out else _default_md_out(input_path)
         json_out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        md_report = render_markdown_report(summary, source_path=str(input_path))
+        md_out.write_text(md_report, encoding="utf-8")
         _print_summary(summary)
         print(f"Saved telemetry JSON: {json_out}")
+        print(f"Saved telemetry Markdown: {md_out}")
         return 0
 
     parser.print_help()

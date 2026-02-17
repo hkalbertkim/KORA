@@ -25,7 +25,7 @@ def _build_graph(request_text: str) -> TaskGraph:
         "graph_id": "real-workload-harness",
         "version": "0.1",
         "root": "task_llm",
-        "defaults": {"budget": {"max_time_ms": 3000, "max_tokens": 400, "max_retries": 1}},
+        "defaults": {"budget": {"max_time_ms": 20000, "max_tokens": 400, "max_retries": 1}},
         "tasks": [
             {
                 "id": "task_pre",
@@ -74,7 +74,10 @@ def _build_graph(request_text: str) -> TaskGraph:
                     "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
                     "rules": [],
                 },
-                "policy": {"budget": {"max_time_ms": 3000, "max_tokens": 400, "max_retries": 1}, "on_fail": "retry"},
+                "policy": {
+                    "budget": {"max_time_ms": 20000, "max_tokens": 400, "max_retries": 1},
+                    "on_fail": "retry",
+                },
                 "tags": ["real-workload"],
             },
         ],
@@ -91,7 +94,9 @@ def _summarize_kora_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     skipped_count = sum(1 for event in events if event.get("skipped") is True)
     stages: dict[str, int] = {}
     for event in events:
-        stage = str(event.get("stage", "UNKNOWN"))
+        if "stage" not in event:
+            continue
+        stage = str(event["stage"])
         stages[stage] = stages.get(stage, 0) + 1
     return {"ok": ok_count, "fail": fail_count, "skipped": skipped_count, "stages": stages}
 
@@ -131,8 +136,8 @@ def _run_direct(request_text: str) -> dict[str, Any]:
 
 
 def _run_kora(request_text: str) -> dict[str, Any]:
-    graph = _build_graph(request_text)
     start = time.monotonic()
+    graph = _build_graph(request_text)
     result = run_graph(graph)
     events = result.get("events", [])
     llm_events = [

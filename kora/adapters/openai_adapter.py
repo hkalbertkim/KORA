@@ -73,7 +73,16 @@ class OpenAIAdapter(BaseAdapter):
                 "meta": {"adapter": "openai", "model": self.model},
             }
 
-        timeout_seconds = max(float(budget.get("max_time_ms", 1500)) / 1000.0 + 1.0, 0.1)
+        timeout_env = os.getenv("OPENAI_HTTP_TIMEOUT_SECONDS", "").strip()
+        try:
+            env_timeout_seconds = float(timeout_env) if timeout_env else 30.0
+        except ValueError:
+            env_timeout_seconds = 30.0
+        timeout_seconds = max(
+            float(budget.get("max_time_ms", 1500)) / 1000.0 + 1.0,
+            env_timeout_seconds,
+            0.1,
+        )
         max_tokens = int(budget.get("max_tokens", 300))
         hardened_schema = harden_schema_for_openai(output_schema)
 

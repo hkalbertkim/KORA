@@ -9,7 +9,8 @@ def test_retry_demo_flaky_once_recovers_on_second_attempt() -> None:
 
     result = run_graph(normalized)
 
-    assert result["final_output"]["status"] == "ok"
+    assert result["ok"] is True
+    assert result["final"]["status"] == "ok"
 
     task_events = [event for event in result["events"] if event["task_id"] == "task_flaky"]
     assert len(task_events) == 2

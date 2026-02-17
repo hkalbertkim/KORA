@@ -9,6 +9,7 @@ from typing import Any, Callable
 from kora.adapters.base import BaseAdapter
 from kora.adapters.mock import MockAdapter
 from kora.adapters.openai_adapter import OpenAIAdapter
+from kora.errors import ErrorType, KoraRuntimeError, Stage
 from kora.scheduler import get_task_map, topo_sort
 from kora.task_ir import Task, TaskGraph
 from kora.verification import verify_output
@@ -166,16 +167,36 @@ def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[
 
 
 def run_graph(graph: TaskGraph) -> dict[str, Any]:
-    """Execute a normalized task graph and return task/final outputs."""
-    order = topo_sort(graph)
-    task_map = get_task_map(graph)
+    """Execute a normalized task graph with structured success/failure contracts."""
     outputs: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     state: dict[str, Any] = {}
+    order: list[str] = []
+
+    try:
+        order = topo_sort(graph)
+        task_map = get_task_map(graph)
+    except Exception as exc:
+        err = KoraRuntimeError(
+            error_type=ErrorType.DAG_INVALID,
+            stage=Stage.SCHEDULER,
+            details=str(exc),
+            retryable=False,
+            budget_breached=False,
+            cause=exc if isinstance(exc, Exception) else None,
+        )
+        return {
+            "ok": False,
+            "graph_id": graph.graph_id,
+            "order": order,
+            "error": err.to_failure_contract(),
+            "events": events,
+            "outputs": outputs,
+            "final": None,
+        }
 
     for task_id in order:
         task = task_map[task_id]
-
         retries = task.policy.budget.max_retries if task.policy.budget is not None else 0
         max_attempts = 1 + max(0, retries)
         attempt = 0
@@ -183,9 +204,12 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
         while True:
             attempt += 1
             start = time.monotonic()
+            stage = Stage.UNKNOWN
             try:
                 if task.run.kind == "det":
+                    stage = Stage.DETERMINISTIC
                     output = _run_det_task(task, state)
+                    stage = Stage.VERIFY
                     verify_output(task, output)
                     outputs[task.id] = output
                     events.append(
@@ -193,12 +217,14 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             "task_id": task.id,
                             "attempt": attempt,
                             "status": "ok",
+                            "stage": Stage.DETERMINISTIC.value,
                             "time_ms": int((time.monotonic() - start) * 1000),
                         }
                     )
                     break
 
                 if task.run.kind == "llm":
+                    stage = Stage.ADAPTER
                     if _skip_if_matches(task, outputs):
                         output = {
                             "status": "ok",
@@ -212,6 +238,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                                 "task_id": task.id,
                                 "attempt": attempt,
                                 "status": "ok",
+                                "stage": Stage.ADAPTER.value,
                                 "time_ms": int((time.monotonic() - start) * 1000),
                                 "skipped": True,
                             }
@@ -225,6 +252,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             "task_id": task.id,
                             "attempt": attempt,
                             "status": "ok",
+                            "stage": Stage.ADAPTER.value,
                             "time_ms": int((time.monotonic() - start) * 1000),
                             "usage": adapter_result.get("usage", {}),
                             "meta": adapter_result.get("meta", {}),
@@ -232,33 +260,81 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     )
                     break
 
-                raise NotImplementedError(f"run.kind '{task.run.kind}' not implemented in v0.1")
+                raise KoraRuntimeError(
+                    error_type=ErrorType.INVALID_TASK,
+                    stage=Stage.IR,
+                    details=f"run.kind '{task.run.kind}' not implemented in v0.1",
+                    task_id=task.id,
+                    retryable=False,
+                    budget_breached=False,
+                )
 
-            except ValueError as exc:
+            except Exception as exc:
+                if isinstance(exc, KoraRuntimeError):
+                    runtime_error = exc
+                else:
+                    message = str(exc)
+                    budget_breached = "budget" in message.lower()
+                    if stage == Stage.VERIFY:
+                        error_type = ErrorType.OUTPUT_SCHEMA_INVALID
+                    elif stage == Stage.DETERMINISTIC:
+                        error_type = ErrorType.DETERMINISTIC_EXEC_FAILED
+                    elif stage == Stage.ADAPTER:
+                        error_type = ErrorType.BUDGET_BREACH if budget_breached else ErrorType.ADAPTER_FAILED
+                    else:
+                        error_type = ErrorType.UNKNOWN
+
+                    runtime_error = KoraRuntimeError(
+                        error_type=error_type,
+                        stage=stage,
+                        details=message,
+                        task_id=task.id,
+                        retryable=(task.policy.on_fail == "retry" and attempt < max_attempts),
+                        budget_breached=budget_breached,
+                        cause=exc if isinstance(exc, Exception) else None,
+                    )
+
                 events.append(
                     {
                         "task_id": task.id,
                         "attempt": attempt,
                         "status": "fail",
-                        "error": str(exc),
+                        "stage": runtime_error.stage.value,
                         "time_ms": int((time.monotonic() - start) * 1000),
+                        "error": runtime_error.to_failure_contract(),
                     }
                 )
+
                 if task.policy.on_fail == "retry" and attempt < max_attempts:
                     continue
-                if task.policy.on_fail == "escalate":
-                    raise ValueError(
-                        f"ESCALATE_REQUIRED: task '{task.id}' execution failed: {exc}"
-                    ) from exc
-                raise ValueError(
-                    f"task '{task.id}' failed after {attempt} attempt(s): {exc}"
-                ) from exc
 
-    final_output = outputs[graph.root]
+                if task.policy.on_fail == "escalate":
+                    runtime_error = KoraRuntimeError(
+                        error_type=ErrorType.ESCALATE_REQUIRED,
+                        stage=runtime_error.stage,
+                        details=runtime_error.details,
+                        task_id=task.id,
+                        retryable=False,
+                        budget_breached=runtime_error.budget_breached,
+                        cause=runtime_error,
+                    )
+
+                return {
+                    "ok": False,
+                    "graph_id": graph.graph_id,
+                    "order": order,
+                    "error": runtime_error.to_failure_contract(),
+                    "events": events,
+                    "outputs": outputs,
+                    "final": None,
+                }
+
+    final_output = outputs.get(graph.root)
     return {
+        "ok": True,
         "graph_id": graph.graph_id,
         "order": order,
-        "outputs": outputs,
-        "final_output": final_output,
         "events": events,
+        "outputs": outputs,
+        "final": final_output,
     }

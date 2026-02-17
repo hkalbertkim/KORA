@@ -8,7 +8,8 @@ def test_run_graph_hello_kora() -> None:
     validate_graph(normalized)
 
     result = run_graph(normalized)
-    final = result["final_output"]
+    assert result["ok"] is True
+    final = result["final"]
 
     assert final["status"] == "ok"
     assert final["message"] == "hello from kora"

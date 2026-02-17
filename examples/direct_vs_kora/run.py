@@ -97,7 +97,7 @@ def _run_kora_case(case_text: str, offline: bool) -> dict[str, Any]:
         "llm_calls": len(llm_events),
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
-        "final_output": result["final_output"],
+        "final_output": result["final"],
         "events": result["events"],
     }
 

@@ -5,3 +5,6 @@ build/
 dist/
 .venv/
 .DS_Store
+.env
+docs/reports/
+studio/backend/.venv_tmp/

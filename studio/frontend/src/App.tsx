@@ -52,6 +52,7 @@ export default function App() {
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [runSkippedLLM, setRunSkippedLLM] = useState(false);
   const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -71,6 +72,7 @@ export default function App() {
     setPlaying(true);
     setActiveIndex(0);
     setTrace([]);
+    setRunSkippedLLM(false);
     setStationMetrics({});
     setReport({});
     try {
@@ -93,7 +95,10 @@ export default function App() {
       es.addEventListener("station", (ev) => {
         try {
           const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
-          const station = stageToStation(parsed.stage);
+          if (parsed.stage.toUpperCase() === "ADAPTER" && parsed.skipped === true) {
+            setRunSkippedLLM(true);
+          }
+          const station = stageToStation(parsed.stage, parsed.skipped === true);
           setTrace((prev) => [...prev, { station, t: prev.length }]);
           setStationMetrics((prev) => ({
             ...prev,
@@ -176,7 +181,12 @@ export default function App() {
       </section>
 
       <section className="viewer card">
-        <MetroMap stations={STATIONS} activeIndex={activeIndex} stationMetrics={stationMetrics} />
+        <MetroMap
+          stations={STATIONS}
+          activeIndex={activeIndex}
+          stationMetrics={stationMetrics}
+          runSkippedLLM={runSkippedLLM}
+        />
         <div className="trace-note">
           {trace.length > 0 ? `Trace steps: ${trace.length}` : "No trace loaded yet."}
         </div>
@@ -189,10 +199,10 @@ export default function App() {
   );
 }
 
-function stageToStation(stage: string): string {
+function stageToStation(stage: string, skipped: boolean): string {
   const key = stage.toUpperCase();
   if (key === "DETERMINISTIC") return "Deterministic";
-  if (key === "ADAPTER") return "Adapter";
+  if (key === "ADAPTER") return skipped ? "Output" : "Adapter";
   if (key === "VERIFY") return "Verify";
   if (key === "BUDGET") return "Verify";
   if (key === "IR") return "Input";

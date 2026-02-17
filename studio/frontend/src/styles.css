@@ -73,8 +73,21 @@ button:disabled {
 }
 
 .metro-line {
-  stroke: #999;
+  stroke: #bcbcbc;
   stroke-width: 4;
+  fill: none;
+}
+
+.metro-line.active-path {
+  stroke: #151515;
+}
+
+.metro-line.inactive-path {
+  stroke: #d7d7d7;
+}
+
+.metro-line.bypass-line {
+  stroke-width: 3.5;
 }
 
 .station {
@@ -88,6 +101,11 @@ button:disabled {
   stroke: #111;
 }
 
+.station.dim {
+  fill: #f0f0f0;
+  stroke: #bdbdbd;
+}
+
 .station-label {
   fill: #333;
   font-size: 11px;
@@ -95,7 +113,7 @@ button:disabled {
 
 .train-dot {
   fill: #000;
-  transition: cx 0.4s ease-in-out;
+  transition: cx 0.4s ease-in-out, cy 0.4s ease-in-out;
 }
 
 .metric-badge {
@@ -110,6 +128,16 @@ button:disabled {
 
 .metric-text.small {
   font-size: 7.5px;
+}
+
+.skip-badge {
+  fill: #111;
+}
+
+.skip-badge-text {
+  fill: #fff;
+  font-size: 8px;
+  font-weight: 700;
 }
 
 .trace-note {

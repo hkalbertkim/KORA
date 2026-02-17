@@ -166,8 +166,18 @@ def run_demo(payload: RunRequest) -> dict[str, str]:
                 "status": event.get("status"),
                 "time_ms": event.get("time_ms"),
             }
+            skipped = None
             if "skipped" in event:
-                normalized["skipped"] = bool(event.get("skipped"))
+                skipped = bool(event.get("skipped"))
+            elif (
+                str(event.get("stage", "")).upper() == "ADAPTER"
+                and str(event.get("status", "")).lower() == "ok"
+                and isinstance(event.get("message"), str)
+                and "skip" in str(event.get("message", "")).lower()
+            ):
+                skipped = True
+            if skipped is not None:
+                normalized["skipped"] = skipped
             usage = event.get("usage")
             if isinstance(usage, dict):
                 normalized["usage"] = usage

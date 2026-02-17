@@ -74,3 +74,18 @@ python3 examples/stress_test/run.py --n 1000 --mix 0.8 --seed 42
 
 stage_counts: {"ADAPTER": 950, "DETERMINISTIC": 950, "VERIFY": 50}
 error_type_counts: {"OUTPUT_SCHEMA_INVALID": 50}
+
+## Budget Exhaustion Mode (Sample)
+
+Command:
+
+```bash
+python3 examples/stress_test/run.py --n 50 --mix 0.8 --seed 42 --exhaust-mode budget
+```
+
+- ok_runs=48
+- failed_runs=2
+- budget_breach_count=4
+
+- Budget breach failures are returned as structured errors: error_type=BUDGET_BREACH, stage=BUDGET, budget_breached=true
+- This validates the failure contract under constrained budgets.

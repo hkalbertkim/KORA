@@ -31,6 +31,9 @@ python3 -m pip install -e .
 uvicorn app.main:app --reload --port 8000
 ```
 
+If importing `kora` fails, run from repo root context or set:
+`PYTHONPATH=../..`
+
 ## Run Frontend
 
 From repo root:

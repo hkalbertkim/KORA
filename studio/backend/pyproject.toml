@@ -6,6 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.111.0",
   "uvicorn>=0.30.0",
+  "requests>=2.31.0",
+  "jsonschema>=4.20.0",
 ]
 
 [build-system]

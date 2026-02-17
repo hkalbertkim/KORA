@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from kora.cost_model import estimate_cost
+
 
 def load_json(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -14,7 +16,12 @@ def load_json(path: str | Path) -> dict[str, Any]:
     return payload
 
 
-def summarize_run(obj: dict[str, Any]) -> dict[str, Any]:
+def summarize_run(
+    obj: dict[str, Any],
+    *,
+    price_input: float | None = None,
+    price_output: float | None = None,
+) -> dict[str, Any]:
     events = obj.get("events")
     if not isinstance(events, list):
         events = []
@@ -110,6 +117,24 @@ def summarize_run(obj: dict[str, Any]) -> dict[str, Any]:
         "budget_breaches": budget_breaches,
         "escalation_required": escalation_required,
     }
+    model = obj.get("model")
+    if not isinstance(model, str) and events:
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            meta = event.get("meta")
+            if isinstance(meta, dict) and isinstance(meta.get("model"), str):
+                model = meta["model"]
+                break
+    if isinstance(model, str):
+        summary["model"] = model
+        summary["estimated_cost_usd"] = estimate_cost(
+            model,
+            tokens_in,
+            tokens_out,
+            price_input=price_input,
+            price_output=price_output,
+        )
     timestamp = obj.get("timestamp")
     if isinstance(timestamp, str):
         summary["timestamp"] = timestamp
@@ -119,7 +144,13 @@ def summarize_run(obj: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def render_markdown_report(summary: dict[str, Any], *, source_path: str) -> str:
+def render_markdown_report(
+    summary: dict[str, Any],
+    *,
+    source_path: str,
+    compare_path: str | None = None,
+    savings: dict[str, Any] | None = None,
+) -> str:
     timestamp = summary.get("timestamp")
     title = f"Telemetry Report ({timestamp})" if isinstance(timestamp, str) and timestamp else "Telemetry Report"
 
@@ -163,6 +194,29 @@ def render_markdown_report(summary: dict[str, Any], *, source_path: str) -> str:
         f"- budget_breaches: {int(summary.get('budget_breaches', 0))}",
         f"- escalation_required: {int(summary.get('escalation_required', 0))}",
     ]
+    if "estimated_cost_usd" in summary:
+        lines.extend(
+            [
+                "",
+                "## Cost Estimate",
+                "",
+                f"- model: {summary.get('model', '')}",
+                f"- estimated_cost_usd: {summary.get('estimated_cost_usd')}",
+            ]
+        )
+    if savings is not None:
+        lines.extend(
+            [
+                "",
+                "## Savings Delta",
+                "",
+                f"- compare_file: `{compare_path or ''}`",
+                f"- direct_cost_usd: {savings.get('direct_cost_usd', 0)}",
+                f"- kora_cost_usd: {savings.get('kora_cost_usd', 0)}",
+                f"- savings_usd: {savings.get('savings_usd', 0)}",
+                f"- savings_percent: {savings.get('savings_percent', 0)}",
+            ]
+        )
 
     if not bool(summary.get("ok", True)):
         error = summary.get("error")

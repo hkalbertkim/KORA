@@ -49,6 +49,20 @@ By default, JSON output is written next to the input file as:
 By default, Markdown report output is also written as:
 `docs/reports/real_app_benchmark.telemetry.md`
 
+### Cost Estimation
+
+You can estimate token-to-cost and compute savings delta between two runs:
+
+```bash
+python3 -m kora.cli telemetry --input A.json --compare B.json
+```
+
+Optional price overrides:
+
+```bash
+python3 -m kora.cli telemetry --input A.json --compare B.json --price-input 0.00015 --price-output 0.0006
+```
+
 ## Captured Metrics
 
 - `total_llm_calls`

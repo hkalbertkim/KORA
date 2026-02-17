@@ -98,6 +98,20 @@ button:disabled {
   transition: cx 0.4s ease-in-out;
 }
 
+.metric-badge {
+  fill: #fff;
+  stroke: #b7b7b7;
+}
+
+.metric-text {
+  fill: #444;
+  font-size: 8.5px;
+}
+
+.metric-text.small {
+  font-size: 7.5px;
+}
+
 .trace-note {
   font-size: 12px;
   color: #666;
@@ -106,7 +120,7 @@ button:disabled {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 10px;
 }

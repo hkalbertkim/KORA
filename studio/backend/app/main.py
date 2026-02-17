@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from kora.executor import run_graph
 from kora.task_ir import TaskGraph, normalize_graph, validate_graph
+from kora.telemetry import summarize_run
 
 app = FastAPI(title="KORA Studio Backend", version="0.1.0")
 RUNS: dict[str, dict[str, Any]] = {}
@@ -154,10 +155,28 @@ def run_demo(payload: RunRequest) -> dict[str, str]:
     graph = _build_graph(payload.prompt, adapter=adapter)
     result = run_graph(graph)
     run_id = uuid4().hex
-    events = result.get("events", [])
-    if not isinstance(events, list):
-        events = []
-    RUNS[run_id] = {"events": events, "done": True}
+    raw_events = result.get("events", [])
+    events: list[dict[str, Any]] = []
+    if isinstance(raw_events, list):
+        for event in raw_events:
+            if not isinstance(event, dict):
+                continue
+            normalized: dict[str, Any] = {
+                "stage": event.get("stage"),
+                "status": event.get("status"),
+                "time_ms": event.get("time_ms"),
+            }
+            if "skipped" in event:
+                normalized["skipped"] = bool(event.get("skipped"))
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                normalized["usage"] = usage
+            error = event.get("error")
+            if isinstance(error, dict):
+                normalized["error"] = error
+            events.append(normalized)
+    summary = summarize_run(result)
+    RUNS[run_id] = {"events": events, "summary": summary, "ok": bool(result.get("ok", True)), "done": True}
     return {"run_id": run_id}
 
 
@@ -181,12 +200,36 @@ async def sse_run(request: Request, run_id: str | None = None) -> StreamingRespo
                 continue
             stage = str(event.get("stage", "UNKNOWN"))
             status = str(event.get("status", "ok"))
-            payload = json.dumps({"stage": stage, "status": status}, separators=(",", ":"))
+            payload_obj: dict[str, Any] = {
+                "stage": stage,
+                "status": status,
+                "time_ms": int(event.get("time_ms", 0)),
+            }
+            if "skipped" in event:
+                payload_obj["skipped"] = bool(event.get("skipped"))
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                if "tokens_in" in usage:
+                    payload_obj["tokens_in"] = int(usage.get("tokens_in", 0))
+                if "tokens_out" in usage:
+                    payload_obj["tokens_out"] = int(usage.get("tokens_out", 0))
+            payload = json.dumps(payload_obj, separators=(",", ":"))
             yield f"event: station\ndata: {payload}\n\n"
             await asyncio.sleep(0.3)
 
         if await request.is_disconnected():
             return
+        summary = run.get("summary", {})
+        if isinstance(summary, dict):
+            summary_payload: dict[str, Any] = {
+                "ok": bool(summary.get("ok", run.get("ok", True))),
+                "total_llm_calls": int(summary.get("total_llm_calls", 0)),
+                "tokens_in": int(summary.get("tokens_in", 0)),
+                "tokens_out": int(summary.get("tokens_out", 0)),
+            }
+            if "estimated_cost_usd" in summary:
+                summary_payload["estimated_cost_usd"] = float(summary["estimated_cost_usd"])
+            yield f"event: summary\ndata: {json.dumps(summary_payload, separators=(',', ':'))}\n\n"
         yield 'event: done\ndata: {"ok":true}\n\n'
 
     if run is None:

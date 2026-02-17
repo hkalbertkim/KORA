@@ -3,6 +3,8 @@ import MetroMap from "./components/MetroMap";
 import MetricsPanel from "./components/MetricsPanel";
 
 type DemoReport = {
+  ok?: boolean;
+  total_time_ms?: number;
   total_llm_calls?: number;
   tokens_in?: number;
   tokens_out?: number;
@@ -20,6 +22,26 @@ type TraceEvent = {
 type StationEvent = {
   stage: string;
   status: string;
+  time_ms: number;
+  skipped?: boolean;
+  tokens_in?: number;
+  tokens_out?: number;
+};
+
+type SummaryEvent = {
+  ok: boolean;
+  total_llm_calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd?: number;
+};
+
+type StationMetric = {
+  status?: string;
+  time_ms?: number;
+  skipped?: boolean;
+  tokens_in?: number;
+  tokens_out?: number;
 };
 
 const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Output"];
@@ -30,14 +52,8 @@ export default function App() {
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
-
-  useEffect(() => {
-    fetch("/api/demo_report")
-      .then((res) => res.json())
-      .then((data) => setReport(data))
-      .catch(() => setReport({}));
-  }, []);
 
   const stationIndexMap = useMemo(() => {
     const out: Record<string, number> = {};
@@ -55,6 +71,8 @@ export default function App() {
     setPlaying(true);
     setActiveIndex(0);
     setTrace([]);
+    setStationMetrics({});
+    setReport({});
     try {
       const runRes = await fetch("/api/run", {
         method: "POST",
@@ -77,12 +95,38 @@ export default function App() {
           const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
           const station = stageToStation(parsed.stage);
           setTrace((prev) => [...prev, { station, t: prev.length }]);
+          setStationMetrics((prev) => ({
+            ...prev,
+            [station]: {
+              status: parsed.status,
+              time_ms: parsed.time_ms,
+              skipped: parsed.skipped,
+              tokens_in: parsed.tokens_in,
+              tokens_out: parsed.tokens_out
+            }
+          }));
           const next = stationIndexMap[station];
           if (typeof next === "number") {
             setActiveIndex(next);
           }
         } catch {
           // Ignore malformed payloads in demo mode.
+        }
+      });
+
+      es.addEventListener("summary", (ev) => {
+        try {
+          const parsed = JSON.parse((ev as MessageEvent<string>).data) as SummaryEvent;
+          setReport((prev) => ({
+            ...prev,
+            ok: parsed.ok,
+            total_llm_calls: parsed.total_llm_calls,
+            tokens_in: parsed.tokens_in,
+            tokens_out: parsed.tokens_out,
+            estimated_cost_usd: parsed.estimated_cost_usd
+          }));
+        } catch {
+          // Ignore malformed summary payloads in demo mode.
         }
       });
 
@@ -132,7 +176,7 @@ export default function App() {
       </section>
 
       <section className="viewer card">
-        <MetroMap stations={STATIONS} activeIndex={activeIndex} />
+        <MetroMap stations={STATIONS} activeIndex={activeIndex} stationMetrics={stationMetrics} />
         <div className="trace-note">
           {trace.length > 0 ? `Trace steps: ${trace.length}` : "No trace loaded yet."}
         </div>

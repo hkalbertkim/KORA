@@ -9,6 +9,8 @@ export default function MetricsPanel({ report }: Props) {
     <div>
       <h2>Metrics</h2>
       <div className="metrics-grid">
+        <Metric label="Run OK" value={report.ok} />
+        <Metric label="Total Time (ms)" value={report.total_time_ms} />
         <Metric label="LLM Calls" value={report.total_llm_calls} />
         <Metric label="Tokens In" value={report.tokens_in} />
         <Metric label="Tokens Out" value={report.tokens_out} />

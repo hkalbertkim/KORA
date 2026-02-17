@@ -117,3 +117,12 @@ Example snippet:
 
 - Long calls equal (1call), KORA reduces tokens_out by 18 and is 312ms faster in this run.
 - KORA provides structured events (stages) for observability; direct does not.
+
+### Cost Delta (Long request, gpt-4o-mini)
+
+- direct_cost_usd: 0.00014805
+- kora_cost_usd: 0.00013140
+- savings_usd: 0.00001665
+- savings_percent: 11.2462%
+
+KORA reduced estimated cost by ~11.25% in this long-request run mainly by reducing output tokens.

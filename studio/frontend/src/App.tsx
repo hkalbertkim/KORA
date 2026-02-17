@@ -17,6 +17,11 @@ type TraceEvent = {
   route?: string;
 };
 
+type StationEvent = {
+  stage: string;
+  status: string;
+};
+
 const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Output"];
 
 export default function App() {
@@ -50,34 +55,51 @@ export default function App() {
     setPlaying(true);
     setActiveIndex(0);
     setTrace([]);
-
-    const es = new EventSource("/api/sse_trace");
-    eventSourceRef.current = es;
-
-    es.addEventListener("station", (ev) => {
-      try {
-        const parsed = JSON.parse((ev as MessageEvent<string>).data) as TraceEvent;
-        setTrace((prev) => [...prev, parsed]);
-        const next = stationIndexMap[parsed.station];
-        if (typeof next === "number") {
-          setActiveIndex(next);
-        }
-      } catch {
-        // Ignore malformed payloads in demo mode.
+    try {
+      const runRes = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, mode: "kora", adapter: "mock" })
+      });
+      if (!runRes.ok) {
+        throw new Error("run request failed");
       }
-    });
+      const runData = (await runRes.json()) as { run_id?: string };
+      if (!runData.run_id) {
+        throw new Error("missing run_id");
+      }
 
-    es.addEventListener("done", () => {
-      es.close();
-      eventSourceRef.current = null;
-      setPlaying(false);
-    });
+      const es = new EventSource(`/api/sse_run?run_id=${encodeURIComponent(runData.run_id)}`);
+      eventSourceRef.current = es;
 
-    es.onerror = () => {
-      es.close();
-      eventSourceRef.current = null;
+      es.addEventListener("station", (ev) => {
+        try {
+          const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
+          const station = stageToStation(parsed.stage);
+          setTrace((prev) => [...prev, { station, t: prev.length }]);
+          const next = stationIndexMap[station];
+          if (typeof next === "number") {
+            setActiveIndex(next);
+          }
+        } catch {
+          // Ignore malformed payloads in demo mode.
+        }
+      });
+
+      es.addEventListener("done", () => {
+        es.close();
+        eventSourceRef.current = null;
+        setPlaying(false);
+      });
+
+      es.onerror = () => {
+        es.close();
+        eventSourceRef.current = null;
+        setPlaying(false);
+      };
+    } catch {
       setPlaying(false);
-    };
+    }
   };
 
   useEffect(() => {
@@ -121,4 +143,15 @@ export default function App() {
       </section>
     </main>
   );
+}
+
+function stageToStation(stage: string): string {
+  const key = stage.toUpperCase();
+  if (key === "DETERMINISTIC") return "Deterministic";
+  if (key === "ADAPTER") return "Adapter";
+  if (key === "VERIFY") return "Verify";
+  if (key === "BUDGET") return "Verify";
+  if (key === "IR") return "Input";
+  if (key === "SCHEDULER") return "Decision";
+  return "Decision";
 }

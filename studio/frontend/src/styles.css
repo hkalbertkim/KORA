@@ -1,0 +1,138 @@
+:root {
+  color: #111;
+  background: #f5f5f5;
+  font-family: "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0.02em;
+}
+
+.header p {
+  margin: 6px 0 0;
+  color: #666;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.controls {
+  display: grid;
+  gap: 10px;
+}
+
+textarea {
+  width: 100%;
+  border: 1px solid #bcbcbc;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  resize: vertical;
+}
+
+button {
+  width: fit-content;
+  border: 1px solid #111;
+  background: #111;
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.metro-map {
+  width: 100%;
+  height: auto;
+}
+
+.metro-line {
+  stroke: #999;
+  stroke-width: 4;
+}
+
+.station {
+  fill: #fff;
+  stroke: #777;
+  stroke-width: 2;
+}
+
+.station.active {
+  fill: #111;
+  stroke: #111;
+}
+
+.station-label {
+  fill: #333;
+  font-size: 11px;
+}
+
+.train-dot {
+  fill: #000;
+  transition: cx 0.4s ease-in-out;
+}
+
+.trace-note {
+  font-size: 12px;
+  color: #666;
+  margin-top: 8px;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.metric-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: #666;
+}
+
+.metric-value {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+pre {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  overflow: auto;
+}

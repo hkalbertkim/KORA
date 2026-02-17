@@ -1,0 +1,13 @@
+[project]
+name = "kora-studio-backend"
+version = "0.1.0"
+description = "KORA Studio v0 demo backend"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn>=0.30.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

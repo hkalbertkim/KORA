@@ -9,6 +9,7 @@ It includes a small FastAPI backend and a single-screen React UI.
 - Real-time station replay via Server-Sent Events (SSE) from `/api/sse_run`
 - Stage-level metric badges (status/time and adapter token usage) overlaid on each station during replay
 - Skip routing visualization (Decision -> Output bypass) when deterministic-first logic skips LLM execution
+- Direct vs KORA comparison view using recent run history (cost/tokens/latency deltas for same prompt)
 - A metrics panel fed by backend demo telemetry (`LLM calls`, `tokens`, `estimated cost`, `stage counts`)
 - A local-only scaffold to iterate before wiring real runtime streaming
 

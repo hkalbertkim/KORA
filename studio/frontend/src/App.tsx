@@ -30,10 +30,20 @@ type StationEvent = {
 
 type SummaryEvent = {
   ok: boolean;
+  total_time_ms: number;
   total_llm_calls: number;
   tokens_in: number;
   tokens_out: number;
   estimated_cost_usd?: number;
+};
+
+type RunMode = "direct" | "kora";
+
+type RunHistoryItem = {
+  run_id: string;
+  prompt: string;
+  mode: RunMode;
+  summary: DemoReport;
 };
 
 type StationMetric = {
@@ -49,12 +59,24 @@ const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Ou
 export default function App() {
   const [prompt, setPrompt] = useState("Summarize this request path.");
   const [report, setReport] = useState<DemoReport>({});
+  const [history, setHistory] = useState<RunHistoryItem[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [runSkippedLLM, setRunSkippedLLM] = useState(false);
   const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  const fetchHistory = async () => {
+    try {
+      const data = await fetch("/api/run_history").then((res) => res.json());
+      if (Array.isArray(data)) {
+        setHistory(data as RunHistoryItem[]);
+      }
+    } catch {
+      setHistory([]);
+    }
+  };
 
   const stationIndexMap = useMemo(() => {
     const out: Record<string, number> = {};
@@ -64,7 +86,34 @@ export default function App() {
     return out;
   }, []);
 
-  const replay = async () => {
+  const comparison = useMemo(() => {
+    if (history.length < 2) {
+      return null;
+    }
+    const first = history[0];
+    const second = history[1];
+    if (first.prompt !== second.prompt || first.mode === second.mode) {
+      return null;
+    }
+
+    const direct = first.mode === "direct" ? first : second;
+    const kora = first.mode === "kora" ? first : second;
+    const directCost = Number(direct.summary.estimated_cost_usd ?? 0);
+    const koraCost = Number(kora.summary.estimated_cost_usd ?? 0);
+    const savingsPercent = directCost > 0 ? ((directCost - koraCost) / directCost) * 100 : 0;
+    const tokensDiff = Number(direct.summary.tokens_out ?? 0) - Number(kora.summary.tokens_out ?? 0);
+    const latencyDiff = Number(direct.summary.total_time_ms ?? 0) - Number(kora.summary.total_time_ms ?? 0);
+
+    return {
+      directCost,
+      koraCost,
+      savingsPercent,
+      tokensDiff,
+      latencyDiff
+    };
+  }, [history]);
+
+  const runMode = async (mode: RunMode) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -79,7 +128,7 @@ export default function App() {
       const runRes = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, mode: "kora", adapter: "mock" })
+        body: JSON.stringify({ prompt, mode, adapter: "mock" })
       });
       if (!runRes.ok) {
         throw new Error("run request failed");
@@ -125,6 +174,7 @@ export default function App() {
           setReport((prev) => ({
             ...prev,
             ok: parsed.ok,
+            total_time_ms: parsed.total_time_ms,
             total_llm_calls: parsed.total_llm_calls,
             tokens_in: parsed.tokens_in,
             tokens_out: parsed.tokens_out,
@@ -139,6 +189,7 @@ export default function App() {
         es.close();
         eventSourceRef.current = null;
         setPlaying(false);
+        void fetchHistory();
       });
 
       es.onerror = () => {
@@ -152,6 +203,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    void fetchHistory();
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -175,9 +227,14 @@ export default function App() {
           onChange={(e) => setPrompt(e.target.value)}
           rows={4}
         />
-        <button onClick={replay} disabled={playing}>
-          {playing ? "Replaying..." : "Replay Demo Trace"}
-        </button>
+        <div className="button-row">
+          <button onClick={() => void runMode("direct")} disabled={playing}>
+            {playing ? "Running..." : "Run Direct"}
+          </button>
+          <button onClick={() => void runMode("kora")} disabled={playing}>
+            {playing ? "Running..." : "Run KORA"}
+          </button>
+        </div>
       </section>
 
       <section className="viewer card">
@@ -195,6 +252,19 @@ export default function App() {
       <section className="card">
         <MetricsPanel report={report} />
       </section>
+
+      {comparison && (
+        <section className="card">
+          <h2>Direct vs KORA (Latest Pair)</h2>
+          <div className="comparison-grid">
+            <MetricLite label="Direct Cost" value={comparison.directCost.toFixed(8)} />
+            <MetricLite label="KORA Cost" value={comparison.koraCost.toFixed(8)} />
+            <MetricLite label="Savings %" value={comparison.savingsPercent.toFixed(4)} />
+            <MetricLite label="Tokens Out Diff" value={comparison.tokensDiff} />
+            <MetricLite label="Latency Diff (ms)" value={comparison.latencyDiff} />
+          </div>
+        </section>
+      )}
     </main>
   );
 }
@@ -208,4 +278,13 @@ function stageToStation(stage: string, skipped: boolean): string {
   if (key === "IR") return "Input";
   if (key === "SCHEDULER") return "Decision";
   return "Decision";
+}
+
+function MetricLite({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">{label}</div>
+      <div className="metric-value">{value}</div>
+    </div>
+  );
 }

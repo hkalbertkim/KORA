@@ -67,6 +67,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
 .metro-map {
   width: 100%;
   height: auto;
@@ -151,6 +156,12 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .metric-card {

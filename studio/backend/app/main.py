@@ -71,7 +71,52 @@ class RunRequest(BaseModel):
     adapter: str = "mock"
 
 
-def _build_graph(prompt: str, adapter: str) -> TaskGraph:
+def _build_graph(prompt: str, adapter: str, mode: str) -> TaskGraph:
+    if mode == "direct":
+        payload = {
+            "graph_id": f"studio-{uuid4().hex[:8]}",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 3000, "max_tokens": 400, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": adapter,
+                            "input": {"question": prompt},
+                            "output_schema": {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string"},
+                                    "task_id": {"type": "string"},
+                                    "answer": {"type": "string"},
+                                },
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "budget": {"max_time_ms": 3000, "max_tokens": 400, "max_retries": 1},
+                        "on_fail": "retry",
+                    },
+                    "tags": ["studio", "direct"],
+                }
+            ],
+        }
+        graph = TaskGraph.model_validate(payload)
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        return normalized
+
     payload = {
         "graph_id": f"studio-{uuid4().hex[:8]}",
         "version": "0.1",
@@ -152,7 +197,8 @@ def demo_trace() -> list[dict[str, Any]]:
 @app.post("/api/run")
 def run_demo(payload: RunRequest) -> dict[str, str]:
     adapter = payload.adapter if payload.adapter in {"openai", "mock"} else "mock"
-    graph = _build_graph(payload.prompt, adapter=adapter)
+    mode = payload.mode if payload.mode in {"kora", "direct"} else "kora"
+    graph = _build_graph(payload.prompt, adapter=adapter, mode=mode)
     result = run_graph(graph)
     run_id = uuid4().hex
     raw_events = result.get("events", [])
@@ -186,8 +232,29 @@ def run_demo(payload: RunRequest) -> dict[str, str]:
                 normalized["error"] = error
             events.append(normalized)
     summary = summarize_run(result)
-    RUNS[run_id] = {"events": events, "summary": summary, "ok": bool(result.get("ok", True)), "done": True}
+    RUNS[run_id] = {
+        "events": events,
+        "summary": summary,
+        "prompt": payload.prompt,
+        "mode": mode,
+        "ok": bool(result.get("ok", True)),
+        "done": True,
+    }
     return {"run_id": run_id}
+
+
+@app.get("/api/run_history")
+def run_history() -> list[dict[str, Any]]:
+    items = list(RUNS.items())[-5:]
+    return [
+        {
+            "run_id": run_id,
+            "prompt": run.get("prompt", ""),
+            "mode": run.get("mode", "kora"),
+            "summary": run.get("summary", {}),
+        }
+        for run_id, run in reversed(items)
+    ]
 
 
 @app.get("/api/sse_run")
@@ -233,6 +300,7 @@ async def sse_run(request: Request, run_id: str | None = None) -> StreamingRespo
         if isinstance(summary, dict):
             summary_payload: dict[str, Any] = {
                 "ok": bool(summary.get("ok", run.get("ok", True))),
+                "total_time_ms": int(summary.get("total_time_ms", 0)),
                 "total_llm_calls": int(summary.get("total_llm_calls", 0)),
                 "tokens_in": int(summary.get("tokens_in", 0)),
                 "tokens_out": int(summary.get("tokens_out", 0)),

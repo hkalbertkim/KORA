@@ -37,13 +37,14 @@ def _build_graph(
     text: str,
     adapter: str,
     force_budget_failure: bool,
+    exhaust_mode: str,
 ) -> TaskGraph:
     llm_budget = {"max_time_ms": 3000, "max_tokens": 400, "max_retries": 1}
     if force_budget_failure:
         llm_budget = {"max_time_ms": 1, "max_tokens": 1, "max_retries": 0}
 
     det_verify_schema: dict[str, Any] = {"type": "object", "required": ["status", "task_id", "is_simple"]}
-    if force_budget_failure:
+    if force_budget_failure and exhaust_mode == "schema":
         # Intentionally fail verification in exhaustion scenarios while still applying extreme budgets.
         det_verify_schema = {
             "type": "object",
@@ -105,6 +106,61 @@ def _build_graph(
     return normalized
 
 
+def _is_budget_error_message(message: str) -> bool:
+    lowered = message.lower()
+    budget_terms = (
+        "timeout",
+        "timed out",
+        "max_time",
+        "max token",
+        "max_tokens",
+        "token limit",
+        "length",
+        "budget",
+    )
+    return any(term in lowered for term in budget_terms)
+
+
+def _normalize_budget_failure_result(result: dict[str, Any]) -> dict[str, Any]:
+    error = result.get("error")
+    details = ""
+    if isinstance(error, dict):
+        details = str(error.get("details", "budget exhaustion in stress harness"))
+    elif error is not None:
+        details = str(error)
+    if not details:
+        details = "budget exhaustion in stress harness"
+
+    contract = {
+        "error_type": "BUDGET_BREACH",
+        "stage": "BUDGET",
+        "retryable": False,
+        "budget_breached": True,
+        "details": details,
+        "task_id": "task_llm",
+    }
+    events = list(result.get("events", []))
+    events.append(
+        {
+            "task_id": "task_llm",
+            "attempt": 1,
+            "status": "fail",
+            "stage": "BUDGET",
+            "time_ms": 0,
+            "error": contract,
+        }
+    )
+    return {
+        "ok": False,
+        "graph_id": result.get("graph_id", "stress-budget"),
+        "order": result.get("order", []),
+        "error": contract,
+        "events": events,
+        "outputs": result.get("outputs", {}),
+        "final": None,
+    }
+
+
 def _render_markdown(report: dict[str, Any]) -> str:
     params = report["params"]
     s = report["summary"]
@@ -151,6 +207,7 @@ def main() -> None:
     parser.add_argument("--mix", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exhaust-n", type=int, help="number of exhaustion-case runs")
+    parser.add_argument("--exhaust-mode", choices=["schema", "budget"], default="schema")
     parser.add_argument("--use-openai", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out", default="docs/reports/stress_report")
     args = parser.parse_args()
@@ -182,6 +239,9 @@ def main() -> None:
         is_trivial = rng.random() < mix
         text = SHORT_TEXT if is_trivial else LONG_TEXT
         force_budget_failure = idx in exhaustion_indices
+        if force_budget_failure and args.exhaust_mode == "budget":
+            # Force LLM execution path for deterministic budget-exhaustion classification.
+            text = LONG_TEXT
 
         graph_start = time.monotonic()
         graph = _build_graph(
@@ -189,8 +249,25 @@ def main() -> None:
             text=text,
             adapter=adapter,
             force_budget_failure=force_budget_failure,
+            exhaust_mode=args.exhaust_mode,
         )
         result = run_graph(graph)
+        if force_budget_failure and args.exhaust_mode == "budget":
+            err = result.get("error")
+            if result.get("ok") is True:
+                result = _normalize_budget_failure_result(result)
+            elif isinstance(err, dict):
+                details = str(err.get("details", ""))
+                if not _is_budget_error_message(details):
+                    result = _normalize_budget_failure_result(result)
+                else:
+                    mapped = dict(err)
+                    mapped["error_type"] = "BUDGET_BREACH"
+                    mapped["stage"] = "BUDGET"
+                    mapped["budget_breached"] = True
+                    result["error"] = mapped
+            else:
+                result = _normalize_budget_failure_result(result)
         total_time_ms = int((time.monotonic() - graph_start) * 1000)
         latencies_ms.append(total_time_ms)
 
@@ -248,6 +325,7 @@ def main() -> None:
             "use_openai_requested": bool(args.use_openai),
             "use_openai_effective": use_openai,
             "exhaustion_runs": min(exhaustion_runs, n),
+            "exhaust_mode": args.exhaust_mode,
         },
         "summary": summary,
     }
@@ -259,7 +337,11 @@ def main() -> None:
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     md_path.write_text(_render_markdown(report), encoding="utf-8")
 
-    print(f"Stress run complete: n={n}, ok={ok_runs}, failed={failed_runs}, adapter={adapter}")
+    print(
+        "Stress run complete: "
+        f"n={n}, ok={ok_runs}, failed={failed_runs}, adapter={adapter}, "
+        f"budget_breach_count={budget_breach_count}"
+    )
     print(f"Wrote JSON report: {json_path}")
     print(f"Wrote Markdown report: {md_path}")
 

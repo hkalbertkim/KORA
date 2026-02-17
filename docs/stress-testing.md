@@ -14,6 +14,7 @@ Optional flags:
 - `--mix`: trivial workload ratio (default `0.8`)
 - `--seed`: RNG seed for repeatability
 - `--exhaust-n`: number of budget exhaustion runs (default: `min(50, max(1, int(n * 0.05)))`)
+- `--exhaust-mode`: exhaustion behavior mode (`schema` or `budget`, default `schema`)
 - `--use-openai` / `--no-use-openai`: prefer OpenAI; automatically falls back to mock when key is missing
 - `--out`: report base path (default `docs/reports/stress_report`)
 
@@ -25,6 +26,7 @@ Optional flags:
   - complex path (LLM execution path)
 - Budget exhaustion cohort with extreme budget settings and intentional validation failure capture
   - default size scales with `n` using `min(50, max(1, int(n * 0.05)))`
+  - `schema` mode yields `OUTPUT_SCHEMA_INVALID`; `budget` mode yields `BUDGET_BREACH`
 
 ## Report Contents
 

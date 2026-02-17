@@ -6,6 +6,7 @@ It includes a small FastAPI backend and a single-screen React UI.
 ## What This Demo Shows
 
 - A simple execution-viewer style metro map with stage replay animation
+- Real-time station replay via Server-Sent Events (SSE) from `/api/sse_trace`
 - A metrics panel fed by backend demo telemetry (`LLM calls`, `tokens`, `estimated cost`, `stage counts`)
 - A local-only scaffold to iterate before wiring real runtime streaming
 
@@ -36,6 +37,6 @@ Backend: [http://localhost:8000](http://localhost:8000)
 
 ## Next Milestones
 
-- Real-time execution event streaming via WebSocket or SSE
+- Replace demo SSE trace with live `run_graph()` execution events
 - Live runtime trigger from UI input
 - Multi-run timeline and report comparison views

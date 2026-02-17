@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MetroMap from "./components/MetroMap";
 import MetricsPanel from "./components/MetricsPanel";
 
@@ -25,6 +25,7 @@ export default function App() {
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     fetch("/api/demo_report")
@@ -42,24 +43,51 @@ export default function App() {
   }, []);
 
   const replay = async () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
     setPlaying(true);
     setActiveIndex(0);
-    const data = await fetch("/api/demo_trace").then((res) => res.json());
-    setTrace(Array.isArray(data) ? data : []);
+    setTrace([]);
 
-    let i = 0;
-    const timer = window.setInterval(() => {
-      if (i >= data.length) {
-        window.clearInterval(timer);
-        setPlaying(false);
-        return;
+    const es = new EventSource("/api/sse_trace");
+    eventSourceRef.current = es;
+
+    es.addEventListener("station", (ev) => {
+      try {
+        const parsed = JSON.parse((ev as MessageEvent<string>).data) as TraceEvent;
+        setTrace((prev) => [...prev, parsed]);
+        const next = stationIndexMap[parsed.station];
+        if (typeof next === "number") {
+          setActiveIndex(next);
+        }
+      } catch {
+        // Ignore malformed payloads in demo mode.
       }
-      const event = data[i] as TraceEvent;
-      const next = stationIndexMap[event.station] ?? i;
-      setActiveIndex(next);
-      i += 1;
-    }, 500);
+    });
+
+    es.addEventListener("done", () => {
+      es.close();
+      eventSourceRef.current = null;
+      setPlaying(false);
+    });
+
+    es.onerror = () => {
+      es.close();
+      eventSourceRef.current = null;
+      setPlaying(false);
+    };
   };
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <main className="page">

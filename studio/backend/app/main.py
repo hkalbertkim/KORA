@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="KORA Studio Backend", version="0.1.0")
 
@@ -70,3 +72,22 @@ def demo_trace() -> list[dict[str, Any]]:
         {"station": "Verify", "t": 4},
         {"station": "Output", "t": 5},
     ]
+
+
+@app.get("/api/sse_trace")
+async def sse_trace(request: Request) -> StreamingResponse:
+    trace = demo_trace()
+
+    async def event_stream():
+        for event in trace:
+            if await request.is_disconnected():
+                return
+            payload = json.dumps(event, separators=(",", ":"))
+            yield f"event: station\ndata: {payload}\n\n"
+            await asyncio.sleep(0.4)
+
+        if await request.is_disconnected():
+            return
+        yield 'event: done\ndata: {"ok":true}\n\n'
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -150,6 +150,7 @@ def main() -> None:
     parser.add_argument("--n", type=int, default=1000)
     parser.add_argument("--mix", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exhaust-n", type=int, help="number of exhaustion-case runs")
     parser.add_argument("--use-openai", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out", default="docs/reports/stress_report")
     args = parser.parse_args()
@@ -160,7 +161,8 @@ def main() -> None:
 
     use_openai = bool(args.use_openai) and bool(os.getenv("OPENAI_API_KEY"))
     adapter = "openai" if use_openai else "mock"
-    exhaustion_runs = max(50, int(round(n * 0.05)))
+    default_exhaustion_runs = min(50, max(1, int(n * 0.05)))
+    exhaustion_runs = default_exhaustion_runs if args.exhaust_n is None else max(0, int(args.exhaust_n))
     exhaustion_indices = set(rng.sample(range(n), min(exhaustion_runs, n)))
 
     total_llm_calls = 0

@@ -13,6 +13,7 @@ Optional flags:
 - `--n`: number of sequential runs (default `1000`)
 - `--mix`: trivial workload ratio (default `0.8`)
 - `--seed`: RNG seed for repeatability
+- `--exhaust-n`: number of budget exhaustion runs (default: `min(50, max(1, int(n * 0.05)))`)
 - `--use-openai` / `--no-use-openai`: prefer OpenAI; automatically falls back to mock when key is missing
 - `--out`: report base path (default `docs/reports/stress_report`)
 
@@ -22,7 +23,8 @@ Optional flags:
 - Mixed workload:
   - trivial path (`classify_simple` + `skip_if` => LLM skipped)
   - complex path (LLM execution path)
-- Budget exhaustion cohort (at least 50 runs) with extreme budget settings and intentional validation failure capture
+- Budget exhaustion cohort with extreme budget settings and intentional validation failure capture
+  - default size scales with `n` using `min(50, max(1, int(n * 0.05)))`
 
 ## Report Contents
 

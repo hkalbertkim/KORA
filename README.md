@@ -99,6 +99,22 @@ flowchart TD
 The model is one stage in execution, not the center of it.
 
 ---
+## Runtime Boundary (v1)
+
+KORA runtime is formally divided into four layers:
+
+- IR Layer (task_ir.py)
+- Execution Engine (scheduler.py, executor.py)
+- Governance (budget.py, verification.py)
+- Adapter Layer (adapters/*)
+
+Each layer has strict dependency rules.
+
+Full runtime specification:
+docs/runtime-architecture.md
+---
+
+---
 
 ## Execution Guarantees
 

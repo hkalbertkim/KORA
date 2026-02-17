@@ -29,6 +29,23 @@ Report output path:
 
 If `OPENAI_API_KEY` is missing, the harness skips the runtime call and writes a clear report with zeroed metrics.
 
+### Telemetry Summary Export
+
+Generate a deterministic telemetry summary from a saved report:
+
+```bash
+python3 -m kora.cli telemetry --input docs/reports/real_app_benchmark.json
+```
+
+or:
+
+```bash
+python3 -m kora telemetry --input docs/reports/real_app_benchmark.json
+```
+
+By default, JSON output is written next to the input file as:
+`docs/reports/real_app_benchmark.telemetry.json`
+
 ## Captured Metrics
 
 - `total_llm_calls`

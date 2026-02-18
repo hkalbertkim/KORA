@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,34 +19,259 @@ DEFAULT_REQUEST = (
     "User asks for a concise summary of cost variance risks in an AI support assistant rollout."
 )
 REPORT_PATH = Path("docs/reports/real_app_benchmark.json")
+OUTPUT_CONTRACT = "OUTPUT:JSON slides[{i,title,msg,bullets[],notes}]"
+
+
+def _parse_constraints_for_prompt(request_text: str) -> dict[str, Any]:
+    lowered = request_text.lower()
+    slide_match = re.search(r"(\d+)\s*-\s*slide|(\d+)\s+slides?", lowered)
+    slide_count = 18
+    if slide_match:
+        number = next((g for g in slide_match.groups() if g), None)
+        if number and number.isdigit():
+            slide_count = int(number)
+
+    topic_domains: list[str] = []
+    phrase_map = [
+        ("market context", "market_context"),
+        ("architecture", "architecture"),
+        ("decomposition", "decomposition"),
+        ("escalation", "escalation"),
+        ("benchmark", "benchmarking"),
+        ("rollout", "rollout_plan"),
+        ("risk", "risk"),
+        ("recommendation", "recommendations"),
+    ]
+    for phrase, label in phrase_map:
+        if phrase in lowered:
+            topic_domains.append(label)
+    if not topic_domains:
+        topic_domains = ["strategy", "execution"]
+
+    return {
+        "intent": "create_presentation_outline",
+        "deliverable_type": "ppt_outline",
+        "slide_count": slide_count,
+        "required_components": ["title", "key_message", "bullets", "presenter_notes"],
+        "topic_domains": topic_domains[:8],
+    }
+
+
+def _build_compact_llm_question(request_text: str) -> str:
+    parsed = _parse_constraints_for_prompt(request_text)
+    slide_count = int(parsed.get("slide_count", 18))
+    domain_tags = [str(tag).strip().lower().replace("_", "") for tag in parsed.get("topic_domains", [])][:8]
+    include_line = "|".join(domain_tags) if domain_tags else "market|arch|decomposition|escalation|bench|rollout|risks|recs"
+    return (
+        "TASK:PPT_OUTLINE\n"
+        f"SLIDES:{slide_count}\n"
+        "FIELDS:title|key_message|bullets(3-5)|notes\n"
+        f"INCLUDE:{include_line}\n"
+        f"{OUTPUT_CONTRACT}"
+    )
+
+
+def _build_raw_llm_question(request_text: str) -> str:
+    return (
+        "TASK:PPT_OUTLINE\n"
+        f"REQUEST:{request_text}\n"
+        "FIELDS:title|key_message|bullets(3-5)|notes\n"
+        f"{OUTPUT_CONTRACT}"
+    )
 
 
 def _build_graph(request_text: str) -> TaskGraph:
-    payload = {
-        "graph_id": "real-workload-harness",
-        "version": "0.1",
-        "root": "task_llm",
-        "defaults": {"budget": {"max_time_ms": 20000, "max_tokens": 400, "max_retries": 1}},
-        "tasks": [
-            {
-                "id": "task_pre",
-                "type": "det.classify_simple",
-                "deps": [],
-                "in": {"text": request_text},
-                "run": {
-                    "kind": "det",
-                    "spec": {
-                        "handler": "classify_simple",
-                        "args": {"text": request_text},
-                    },
+    baseline_raw = os.getenv("KORA_BASELINE_RAW", "") == "1"
+    hier_escalation = os.getenv("KORA_HIER_ESCALATION", "") == "1"
+    compact_question = _build_raw_llm_question(request_text) if baseline_raw else _build_compact_llm_question(request_text)
+    root_task = "task_llm_full" if hier_escalation else "task_llm"
+
+    tasks: list[dict[str, Any]] = [
+        {
+            "id": "task_parse_constraints",
+            "type": "det.parse_request_constraints",
+            "deps": [],
+            "in": {"text": request_text},
+            "run": {
+                "kind": "det",
+                "spec": {
+                    "handler": "parse_request_constraints",
+                    "args": {"text": request_text},
                 },
-                "verify": {
-                    "schema": {"type": "object", "required": ["status", "task_id", "is_simple"]},
-                    "rules": [{"kind": "required", "paths": ["status", "task_id", "is_simple"]}],
-                },
-                "policy": {"on_fail": "fail"},
-                "tags": ["real-workload"],
             },
+            "verify": {
+                "schema": {
+                    "type": "object",
+                    "required": [
+                        "status",
+                        "task_id",
+                        "intent",
+                        "deliverable_type",
+                        "slide_count",
+                        "required_components",
+                        "topic_domains",
+                    ],
+                },
+                "rules": [],
+            },
+            "policy": {"on_fail": "fail"},
+            "tags": ["real-workload", "constraint-parse"],
+        },
+        {
+            "id": "task_pre",
+            "type": "det.classify_simple",
+            "deps": ["task_parse_constraints"],
+            "in": {"text": compact_question},
+            "run": {
+                "kind": "det",
+                "spec": {
+                    "handler": "classify_simple",
+                    "args": {"text": compact_question},
+                },
+            },
+            "verify": {
+                "schema": {"type": "object", "required": ["status", "task_id", "is_simple"]},
+                "rules": [{"kind": "required", "paths": ["status", "task_id", "is_simple"]}],
+            },
+            "policy": {"on_fail": "fail"},
+            "tags": ["real-workload"],
+        },
+    ]
+
+    if hier_escalation:
+        mini_question = (
+            "TASK:MINI_SKELETON\n"
+            f"REQ:{compact_question}\n"
+            "Return ONLY valid JSON. No prose. No markdown. No code fences.\n"
+            "Top-level JSON keys MUST be exactly: status, task_id, slides.\n"
+            "Set status='ok' and task_id='task_llm_mini'.\n"
+            "slides must be an array of exactly 18 objects.\n"
+            "Each slide object MUST include keys: i,title,msg,bullets.\n"
+            "bullets MUST be an array with 0 or 1 short strings.\n"
+        )
+        full_question = (
+            "TASK:FULL_REFINE\n"
+            "INPUT:mini skeleton from prior step\n"
+            f"CONSTRAINTS:{compact_question}\n"
+            f"{OUTPUT_CONTRACT}"
+        )
+        tasks.extend(
+            [
+                {
+                    "id": "task_llm_mini",
+                    "type": "llm.answer.mini",
+                    "deps": ["task_pre"],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "openai_mini",
+                            "input": {
+                                "question": mini_question,
+                                "skip_if": {"path": "$.is_simple", "equals": True},
+                            },
+                            "output_schema": {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string"},
+                                    "task_id": {"type": "string"},
+                                    "slides": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "i": {"type": "integer"},
+                                                "title": {"type": "string"},
+                                                "msg": {"type": "string"},
+                                                "bullets": {
+                                                    "type": "array",
+                                                    "items": {"type": "string"},
+                                                    "minItems": 0,
+                                                    "maxItems": 1,
+                                                },
+                                            },
+                                            "required": ["i", "title", "msg", "bullets"],
+                                        },
+                                    },
+                                },
+                                "required": ["status", "task_id", "slides"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "slides"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "budget": {"max_time_ms": 12000, "max_tokens": 220, "max_retries": 1},
+                        "on_fail": "retry",
+                    },
+                    "tags": ["real-workload", "hier-mini"],
+                },
+                {
+                    "id": "task_quality_gate",
+                    "type": "det.quality_gate",
+                    "deps": ["task_llm_mini"],
+                    "in": {},
+                    "run": {
+                        "kind": "det",
+                        "spec": {
+                            "handler": "quality_gate",
+                            "args": {
+                                "dep_task_id": "task_llm_mini",
+                                "target_slide_count": 18,
+                                "required_fields": ["i", "title", "msg", "bullets"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "message", "needs_refine", "reason"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {"on_fail": "fail"},
+                    "tags": ["real-workload", "hier-gate"],
+                },
+                {
+                    "id": "task_llm_full",
+                    "type": "llm.answer.full",
+                    "deps": ["task_quality_gate"],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "openai_full",
+                            "input": {
+                                "question": full_question,
+                                "skip_if": {"path": "$.message", "equals": "skip_full"},
+                            },
+                            "output_schema": {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string"},
+                                    "task_id": {"type": "string"},
+                                    "answer": {"type": "string"},
+                                },
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "budget": {"max_time_ms": 22000, "max_tokens": 400, "max_retries": 1},
+                        "on_fail": "retry",
+                    },
+                    "tags": ["real-workload", "hier-full"],
+                },
+            ]
+        )
+    else:
+        tasks.append(
             {
                 "id": "task_llm",
                 "type": "llm.answer",
@@ -56,7 +282,7 @@ def _build_graph(request_text: str) -> TaskGraph:
                     "spec": {
                         "adapter": "openai",
                         "input": {
-                            "question": request_text,
+                            "question": compact_question,
                             "skip_if": {"path": "$.is_simple", "equals": True},
                         },
                         "output_schema": {
@@ -79,8 +305,15 @@ def _build_graph(request_text: str) -> TaskGraph:
                     "on_fail": "retry",
                 },
                 "tags": ["real-workload"],
-            },
-        ],
+            }
+        )
+
+    payload = {
+        "graph_id": "real-workload-harness",
+        "version": "0.1",
+        "root": root_task,
+        "defaults": {"budget": {"max_time_ms": 20000, "max_tokens": 400, "max_retries": 1}},
+        "tasks": tasks,
     }
     graph = TaskGraph.model_validate(payload)
     normalized = normalize_graph(graph)

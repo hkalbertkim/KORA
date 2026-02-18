@@ -22,6 +22,16 @@ def summarize_run(
     price_input: float | None = None,
     price_output: float | None = None,
 ) -> dict[str, Any]:
+    def _event_usage_tokens(event: dict[str, Any]) -> tuple[int, int]:
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            return 0, 0
+        tokens_in_local = int(usage.get("tokens_in", usage.get("input_tokens", usage.get("prompt_tokens", 0))) or 0)
+        tokens_out_local = int(
+            usage.get("tokens_out", usage.get("output_tokens", usage.get("completion_tokens", 0))) or 0
+        )
+        return tokens_in_local, tokens_out_local
+
     events = obj.get("events")
     if not isinstance(events, list):
         events = []
@@ -128,13 +138,34 @@ def summarize_run(
                 break
     if isinstance(model, str):
         summary["model"] = model
-        summary["estimated_cost_usd"] = estimate_cost(
+        estimated_cost = estimate_cost(
             model,
             tokens_in,
             tokens_out,
             price_input=price_input,
             price_output=price_output,
         )
+        if estimated_cost == 0.0 and events:
+            estimated_cost = 0.0
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                meta = event.get("meta")
+                if not isinstance(meta, dict):
+                    continue
+                event_model = meta.get("model")
+                if not isinstance(event_model, str) or not event_model:
+                    continue
+                event_tokens_in, event_tokens_out = _event_usage_tokens(event)
+                estimated_cost += estimate_cost(
+                    event_model,
+                    event_tokens_in,
+                    event_tokens_out,
+                    price_input=price_input,
+                    price_output=price_output,
+                )
+            estimated_cost = round(estimated_cost, 8)
+        summary["estimated_cost_usd"] = estimated_cost
     timestamp = obj.get("timestamp")
     if isinstance(timestamp, str):
         summary["timestamp"] = timestamp

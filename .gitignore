@@ -7,4 +7,9 @@ dist/
 .DS_Store
 .env
 docs/reports/
+docs/experiments/
+logs/
+logs/debug/
+logs/experiments/
+*experiment*.json
 studio/backend/.venv_tmp/

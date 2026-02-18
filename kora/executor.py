@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from typing import Any, Callable
 
 from kora.adapters.base import BaseAdapter
 from kora.adapters.mock import MockAdapter
-from kora.adapters.openai_adapter import OpenAIAdapter
+from kora.adapters.openai_adapter import OpenAIAdapter, OpenAIFullAdapter, OpenAIMiniAdapter
 from kora.errors import ErrorType, KoraRuntimeError, Stage
 from kora.scheduler import get_task_map, topo_sort
 from kora.task_ir import Task, TaskGraph
@@ -20,6 +22,8 @@ Handler = Callable[[Task, dict[str, Any]], dict[str, Any]]
 class _AdapterRegistry:
     providers: dict[str, type[BaseAdapter]] = {
         "openai": OpenAIAdapter,
+        "openai_mini": OpenAIMiniAdapter,
+        "openai_full": OpenAIFullAdapter,
         "mock": MockAdapter,
     }
 
@@ -74,10 +78,153 @@ def _handle_flaky_once(task: Task, state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_parse_request_constraints(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    del state
+    text = task.in_.get("text")
+    if text is None and task.run.kind == "det":
+        text = task.run.spec.args.get("text", "")
+    if not isinstance(text, str):
+        text = str(text)
+    lowered = text.lower()
+
+    slide_match = re.search(r"(\d+)\s*-\s*slide|(\d+)\s+slides?", lowered)
+    slide_count = 18
+    if slide_match:
+        number = next((g for g in slide_match.groups() if g), None)
+        if number and number.isdigit():
+            slide_count = int(number)
+
+    topic_domains: list[str] = []
+    phrase_map = [
+        ("market context", "market_context"),
+        ("architecture", "architecture"),
+        ("decomposition", "decomposition"),
+        ("escalation", "escalation"),
+        ("benchmark", "benchmarking"),
+        ("rollout", "rollout_plan"),
+        ("risk", "risk"),
+        ("recommendation", "recommendations"),
+    ]
+    for phrase, label in phrase_map:
+        if phrase in lowered:
+            topic_domains.append(label)
+
+    if not topic_domains:
+        topic_domains = ["strategy", "execution"]
+
+    return {
+        "status": "ok",
+        "task_id": task.id,
+        "intent": "create_presentation_outline",
+        "deliverable_type": "ppt_outline",
+        "slide_count": slide_count,
+        "required_components": ["title", "key_message", "bullets", "presenter_notes"],
+        "topic_domains": topic_domains[:6],
+    }
+
+
+def _handle_quality_gate(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    if os.getenv("KORA_FORCE_FULL", "") == "1":
+        return {
+            "status": "ok",
+            "task_id": task.id,
+            "message": "run_full",
+            "needs_refine": True,
+            "reason": "forced_full",
+        }
+
+    outputs = state.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+
+    dep_task_id = ""
+    if task.run.kind == "det":
+        dep_task_id = str(task.run.spec.args.get("dep_task_id", "")).strip()
+    if not dep_task_id and task.deps:
+        dep_task_id = task.deps[0]
+
+    dep_output = outputs.get(dep_task_id, {})
+    if not isinstance(dep_output, dict):
+        dep_output = {}
+
+    if not isinstance(dep_output.get("slides"), list):
+        return {
+            "status": "ok",
+            "task_id": task.id,
+            "message": "run_full",
+            "needs_refine": True,
+            "reason": "mini_missing_slides",
+        }
+    candidate: Any = dep_output
+
+    target_slide_count = 18
+    required_fields = ["i", "title", "msg", "bullets"]
+    if task.run.kind == "det":
+        target_slide_count = int(task.run.spec.args.get("target_slide_count", 18))
+        custom_fields = task.run.spec.args.get("required_fields", required_fields)
+        if isinstance(custom_fields, list) and custom_fields:
+            required_fields = [str(f) for f in custom_fields]
+
+    slides = candidate.get("slides")
+    if not isinstance(slides, list) or len(slides) != target_slide_count:
+        return {
+            "status": "ok",
+            "task_id": task.id,
+            "message": "run_full",
+            "needs_refine": True,
+            "reason": "slide_count_mismatch",
+        }
+
+    for slide in slides:
+        if not isinstance(slide, dict):
+            return {
+                "status": "ok",
+                "task_id": task.id,
+                "message": "run_full",
+                "needs_refine": True,
+                "reason": "slide_not_object",
+            }
+        if any(field not in slide for field in required_fields):
+            return {
+                "status": "ok",
+                "task_id": task.id,
+                "message": "run_full",
+                "needs_refine": True,
+                "reason": "slide_fields_missing",
+            }
+        bullets = slide.get("bullets")
+        if not isinstance(bullets, list):
+            return {
+                "status": "ok",
+                "task_id": task.id,
+                "message": "run_full",
+                "needs_refine": True,
+                "reason": "bullets_not_array",
+            }
+        if len(bullets) > 1:
+            return {
+                "status": "ok",
+                "task_id": task.id,
+                "message": "run_full",
+                "needs_refine": True,
+                "reason": "bullets_too_many",
+            }
+
+    return {
+        "status": "ok",
+        "task_id": task.id,
+        "message": "skip_full",
+        "needs_refine": False,
+        "reason": "mini_satisfies_contract",
+    }
+
+
 DETERMINISTIC_HANDLERS: dict[str, Handler] = {
     "echo": _handle_echo,
     "classify_simple": _handle_classify_simple,
     "flaky_once": _handle_flaky_once,
+    "parse_request_constraints": _handle_parse_request_constraints,
+    "quality_gate": _handle_quality_gate,
 }
 
 
@@ -171,6 +318,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
     outputs: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     state: dict[str, Any] = {}
+    state["outputs"] = outputs
     order: list[str] = []
 
     try:

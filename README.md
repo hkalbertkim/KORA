@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/KORA_Img_Text_logo.png" alt="KORA Logo" width=""330" />
+  <img src="assets/KORA_Img_Text_logo.png" alt="KORA Logo" width="330" />
 </p>
 
 <h1 align="center">KORA</h1>

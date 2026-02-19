@@ -34,7 +34,7 @@ Structured execution reduces invocation frequency without reducing correctness.
 ## KORA vs Direct LLM
 
 | Dimension | Direct LLM | KORA |
-|---|---|---|
+|------------|------------|------|
 | Invocation behavior | Reflexive model call | Deterministic-first routing |
 | Cost control | Opaque cost profile | Budget governance + telemetry |
 | Output constraints | Best-effort responses | Schema-validated contracts |
@@ -66,11 +66,11 @@ Run these two commands to compare direct inference with deterministic-first stru
 
 In controlled tests using `gpt-4o-mini`:
 
-| Metric      | Direct | KORA | Reduction |
-|-------------|--------|------|-----------|
-| LLM Calls   | 2      | 1    | -50%      |
-| Tokens In   | 359    | 225  | -37%      |
-| Tokens Out  | 121    | 85   | -30%      |
+| Metric | Direct | KORA | Reduction |
+|--------|--------|------|-----------|
+| LLM Calls | 2 | 1 | -50% |
+| Tokens In | 359 | 225 | -37% |
+| Tokens Out | 121 | 85 | -30% |
 
 Outputs were equivalent.
 

@@ -29,6 +29,41 @@ KORA introduces deterministic-first task decomposition before any model invocati
 
 Structured execution reduces invocation frequency without reducing correctness.
 
+## Quickstart
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e ".[dev]"
+python3 examples/hello_kora/run.py
+python3 examples/direct_vs_kora/run.py
+```
+
+## Minimal Example
+
+```bash
+python3 examples/hello_kora/run.py
+python3 examples/direct_vs_kora/run.py
+```
+
+Run these two commands to compare direct inference with deterministic-first structured execution.
+
+## Benchmark Snapshot
+
+In controlled tests using `gpt-4o-mini`:
+
+| Metric      | Direct | KORA | Reduction |
+|-------------|--------|------|-----------|
+| LLM Calls   | 2      | 1    | -50%      |
+| Tokens In   | 359    | 225  | -37%      |
+| Tokens Out  | 121    | 85   | -30%      |
+
+Outputs were equivalent.
+
+Structured execution reduced invocation frequency without degrading capability.
+
+See `docs/benchmark.md`.
+
 KORA is an execution architecture that structures intelligence before invoking large language models.
 
 It does not replace models.  
@@ -159,24 +194,6 @@ These are architectural constraints, not configuration options.
 
 ---
 
-## Benchmark Snapshot
-
-In controlled tests using `gpt-4o-mini`:
-
-| Metric      | Direct | KORA | Reduction |
-|-------------|--------|------|-----------|
-| LLM Calls   | 2      | 1    | -50%      |
-| Tokens In   | 359    | 225  | -37%      |
-| Tokens Out  | 121    | 85   | -30%      |
-
-Outputs were equivalent.
-
-Structured execution reduced invocation frequency without degrading capability.
-
-See `docs/benchmark.md`.
-
----
-
 ## Falsifiable Claim
 
 KORA makes a measurable claim:
@@ -230,18 +247,6 @@ https://en.wikipedia.org/wiki/Toumani_Diabat%C3%A9
 demonstrated that disciplined structure enables layered complexity.
 
 The analogy is architectural, not decorative.
-
----
-
-## Quickstart
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e ".[dev]"
-python3 examples/hello_kora/run.py
-python3 examples/direct_vs_kora/run.py
-```
 
 ---
 

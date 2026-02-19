@@ -31,6 +31,18 @@ Instead of treating models as reflexive endpoints, KORA structures execution bef
 
 Structured execution reduces invocation frequency without reducing correctness.
 
+## KORA vs Direct LLM
+
+| Dimension | Direct LLM | KORA |
+|---|---|---|
+| Invocation behavior | Reflexive model call | Deterministic-first routing |
+| Cost control | Opaque cost profile | Budget governance + telemetry |
+| Output constraints | Best-effort responses | Schema-validated contracts |
+| Latency profile | Volatile end-to-end latency | Staged + measurable execution |
+| Scaling path | Centralized GPU dependency | Heterogeneous compute routing |
+
+Direct is a call. KORA is an execution plan.
+
 ## Quickstart
 
 ```bash

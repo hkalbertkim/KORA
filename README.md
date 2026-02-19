@@ -175,6 +175,7 @@ flowchart TD
 The model is one stage in execution, not the center of it.
 
 ---
+
 ## Runtime Boundary (v1)
 
 KORA runtime is formally divided into four layers:

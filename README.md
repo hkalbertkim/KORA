@@ -1,6 +1,18 @@
-# KORA
+<p align="center">
+  <img src="assets/KORA_Img_Text_logo.png" alt="KORA Logo" width="220" />
+</p>
 
-## Inference-First Execution Architecture
+<h1 align="center">KORA</h1>
+
+<p align="center"><strong>Inference-First Execution Architecture</strong></p>
+
+<p align="center">
+  <img alt="Deterministic-first" src="https://img.shields.io/badge/Deterministic--first-0f766e?style=flat-square" />
+  <img alt="DAG execution" src="https://img.shields.io/badge/DAG-execution-1d4ed8?style=flat-square" />
+  <img alt="Budget governance" src="https://img.shields.io/badge/Budget-governance-7c3aed?style=flat-square" />
+  <img alt="Telemetry" src="https://img.shields.io/badge/Telemetry-observability-475569?style=flat-square" />
+  <img alt="Model-agnostic" src="https://img.shields.io/badge/Model-agnostic-374151?style=flat-square" />
+</p>
 
 KORA is an execution architecture that structures intelligence before invoking large language models.
 

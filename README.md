@@ -21,7 +21,9 @@
 
 ## What KORA Does
 
-KORA introduces deterministic-first task decomposition before any model invocation, so requests are structurally routed through predictable execution paths before escalation to inference.
+KORA is an Inference Operating System.
+It governs when, how, and whether large language models are invoked.
+Instead of treating models as reflexive endpoints, KORA structures execution before inference.
 
 - Eliminates unnecessary LLM calls through deterministic routing.
 - Enforces budget and schema constraints at runtime.

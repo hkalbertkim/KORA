@@ -83,8 +83,12 @@ def _build_raw_llm_question(request_text: str) -> str:
 def _build_graph(request_text: str) -> TaskGraph:
     baseline_raw = os.getenv("KORA_BASELINE_RAW", "") == "1"
     hier_escalation = os.getenv("KORA_HIER_ESCALATION", "") == "1"
+    hier_plan_only = os.getenv("KORA_HIER_PLAN_ONLY", "") == "1"
     compact_question = _build_raw_llm_question(request_text) if baseline_raw else _build_compact_llm_question(request_text)
-    root_task = "task_llm_full" if hier_escalation else "task_llm"
+    if hier_escalation and hier_plan_only:
+        root_task = "task_llm_mini"
+    else:
+        root_task = "task_llm_full" if hier_escalation else "task_llm"
 
     tasks: list[dict[str, Any]] = [
         {
@@ -139,16 +143,31 @@ def _build_graph(request_text: str) -> TaskGraph:
     ]
 
     if hier_escalation:
-        mini_question = (
-            "TASK:MINI_SKELETON\n"
-            f"REQ:{compact_question}\n"
-            "Return ONLY valid JSON. No prose. No markdown. No code fences.\n"
-            "Top-level JSON keys MUST be exactly: status, task_id, slides.\n"
-            "Set status='ok' and task_id='task_llm_mini'.\n"
-            "slides must be an array of exactly 18 objects.\n"
-            "Each slide object MUST include keys: i,title,msg,bullets.\n"
-            "bullets MUST be an array with 0 or 1 short strings.\n"
-        )
+        if hier_plan_only:
+            mini_question = (
+                "TASK:MINI_PLAN_ONLY\n"
+                f"REQ:{compact_question}\n"
+                "Return ONLY valid JSON. No prose. No markdown. No code fences.\n"
+                "Top-level JSON keys MUST be exactly: status, task_id, slides.\n"
+                "Set status='ok' and task_id='task_llm_mini'.\n"
+                "slides must be an array of exactly 18 objects.\n"
+                "Each slide object MUST include keys: i,title,msg.\n"
+            )
+            mini_slide_required = ["i", "title", "msg"]
+            gate_required_fields = ["i", "title", "msg"]
+        else:
+            mini_question = (
+                "TASK:MINI_SKELETON\n"
+                f"REQ:{compact_question}\n"
+                "Return ONLY valid JSON. No prose. No markdown. No code fences.\n"
+                "Top-level JSON keys MUST be exactly: status, task_id, slides.\n"
+                "Set status='ok' and task_id='task_llm_mini'.\n"
+                "slides must be an array of exactly 18 objects.\n"
+                "Each slide object MUST include keys: i,title,msg,bullets.\n"
+                "bullets MUST be an array with 0 or 1 short strings.\n"
+            )
+            mini_slide_required = ["i", "title", "msg", "bullets"]
+            gate_required_fields = ["i", "title", "msg", "bullets"]
         full_question = (
             "TASK:FULL_REFINE\n"
             "INPUT:mini skeleton from prior step\n"
@@ -190,7 +209,7 @@ def _build_graph(request_text: str) -> TaskGraph:
                                                     "maxItems": 1,
                                                 },
                                             },
-                                            "required": ["i", "title", "msg", "bullets"],
+                                            "required": mini_slide_required,
                                         },
                                     },
                                 },
@@ -220,7 +239,7 @@ def _build_graph(request_text: str) -> TaskGraph:
                             "args": {
                                 "dep_task_id": "task_llm_mini",
                                 "target_slide_count": 18,
-                                "required_fields": ["i", "title", "msg", "bullets"],
+                                "required_fields": gate_required_fields,
                             },
                         },
                     },

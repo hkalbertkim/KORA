@@ -124,6 +124,15 @@ def _handle_parse_request_constraints(task: Task, state: dict[str, Any]) -> dict
 
 
 def _handle_quality_gate(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    if os.getenv("KORA_HIER_PLAN_ONLY", "") == "1":
+        return {
+            "status": "ok",
+            "task_id": task.id,
+            "message": "skip_full",
+            "needs_refine": False,
+            "reason": "plan_only",
+        }
+
     if os.getenv("KORA_FORCE_FULL", "") == "1":
         return {
             "status": "ok",
@@ -192,23 +201,24 @@ def _handle_quality_gate(task: Task, state: dict[str, Any]) -> dict[str, Any]:
                 "needs_refine": True,
                 "reason": "slide_fields_missing",
             }
-        bullets = slide.get("bullets")
-        if not isinstance(bullets, list):
-            return {
-                "status": "ok",
-                "task_id": task.id,
-                "message": "run_full",
-                "needs_refine": True,
-                "reason": "bullets_not_array",
-            }
-        if len(bullets) > 1:
-            return {
-                "status": "ok",
-                "task_id": task.id,
-                "message": "run_full",
-                "needs_refine": True,
-                "reason": "bullets_too_many",
-            }
+        if "bullets" in required_fields:
+            bullets = slide.get("bullets")
+            if not isinstance(bullets, list):
+                return {
+                    "status": "ok",
+                    "task_id": task.id,
+                    "message": "run_full",
+                    "needs_refine": True,
+                    "reason": "bullets_not_array",
+                }
+            if len(bullets) > 1:
+                return {
+                    "status": "ok",
+                    "task_id": task.id,
+                    "message": "run_full",
+                    "needs_refine": True,
+                    "reason": "bullets_too_many",
+                }
 
     return {
         "status": "ok",

@@ -19,6 +19,16 @@
 
 <p align="center"><a href="docs/">Docs</a> · <a href="#quickstart">Quickstart</a> · <a href="docs/benchmark.md">Benchmarks</a> · <a href="studio/">Studio</a></p>
 
+## What KORA Does
+
+KORA introduces deterministic-first task decomposition before any model invocation, so requests are structurally routed through predictable execution paths before escalation to inference.
+
+- Eliminates unnecessary LLM calls through deterministic routing.
+- Enforces budget and schema constraints at runtime.
+- Decomposes complex requests into bounded task graphs.
+
+Structured execution reduces invocation frequency without reducing correctness.
+
 KORA is an execution architecture that structures intelligence before invoking large language models.
 
 It does not replace models.  

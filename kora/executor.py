@@ -401,6 +401,21 @@ def _apply_adaptive_confidence_policy(
         meta["stop_reason"] = "voi_too_low"
         return
 
+    remaining_units: float | None = None
+    budget = task.policy.budget
+    if budget is not None:
+        max_tokens = budget.max_tokens
+        if isinstance(max_tokens, (int, float)) and not isinstance(max_tokens, bool):
+            remaining_units = float(max_tokens)
+        else:
+            max_time_ms = budget.max_time_ms
+            if isinstance(max_time_ms, (int, float)) and not isinstance(max_time_ms, bool):
+                remaining_units = float(max_time_ms)
+    if remaining_units is not None and stage_cost > remaining_units:
+        meta["escalate_recommended"] = False
+        meta["stop_reason"] = "budget_remaining_low"
+        return
+
     meta["escalate_recommended"] = True
     meta["stop_reason"] = "escalate_confidence"
 

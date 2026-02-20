@@ -492,3 +492,100 @@ def test_adaptive_voi_uses_runtime_estimated_cost_when_policy_cost_missing() -> 
     assert meta["cost_units"] == 2.0
     assert meta["stop_reason"] == "voi_too_low"
     assert meta["estimated_next_cost"] > 100.0
+
+
+def test_adaptive_budget_remaining_low_blocks_escalation() -> None:
+    from kora import executor as executor_module
+
+    class MockMiniAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockMiniAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "mini result",
+                },
+                "usage": {"tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-budget-low",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {
+                        "budget": {"max_time_ms": 1500, "max_tokens": 1, "max_retries": 1},
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "min_voi_to_escalate": 0.01,
+                            "max_escalations": 1,
+                            "escalation_order": ["gate"],
+                            "stage_costs": {"gate": 2.0},
+                            "use_voi": True,
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
+    MockMiniAdapter.call_count = 0
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+
+    assert result["ok"] is True
+    llm_events = [event for event in result["events"] if event["task_id"] == "task_llm"]
+    assert len(llm_events) == 1
+    assert MockMiniAdapter.call_count == 1
+    meta = llm_events[0]["meta"]
+    assert meta["stop_reason"] == "budget_remaining_low"
+    assert meta["escalate_recommended"] is False

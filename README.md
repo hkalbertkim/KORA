@@ -86,6 +86,23 @@ Stage timing evidence (seconds):
 
 See `docs/benchmark.md` for broader benchmark context.
 
+## Adaptive Routing Example
+
+Run command:
+```bash
+python3 examples/direct_vs_kora/run.py
+```
+
+```text
+- step=0 conf=0.1 unc=0.9 est_cost=1.0 voi=0.9 stop=escalate_confidence cost_units=10.0
+- step=1 conf=0.2 unc=0.8 est_cost=1.0 voi=0.8 stop=escalate_confidence cost_units=2000.0
+- step=2 conf=0.95 unc=0.050000000000000044 est_cost=1.0 voi=0.050000000000000044 stop=confident_enough cost_units=100.0
+```
+
+- `escalation_step` indicates multi-stage adapter escalation within a single task execution.
+- `stop_reason` indicates why routing stopped (`confident_enough`, `voi_too_low`, `budget_remaining_low`).
+- `cost_units` is observed per-call cost; `estimated_next_cost` is predicted next-stage cost used for VoI gating.
+
 KORA is an execution architecture that structures intelligence before invoking large language models.
 
 It does not replace models.  

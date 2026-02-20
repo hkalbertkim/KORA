@@ -319,12 +319,12 @@ def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[
         raise ValueError("adapter output must be a JSON object")
 
     output = normalize_answer_json_string(output)
-    verify_output(task, output)
     return output, result
 
 
 def run_graph(graph: TaskGraph) -> dict[str, Any]:
     """Execute a normalized task graph with structured success/failure contracts."""
+    run_start = time.monotonic()
     outputs: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     state: dict[str, Any] = {}
@@ -333,10 +333,13 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
     state["stage_timings"] = stage_timings
     order: list[str] = []
 
+    scheduler_start = time.monotonic()
     try:
         order = topo_sort(graph)
         task_map = get_task_map(graph)
     except Exception as exc:
+        scheduler_delta = time.monotonic() - scheduler_start
+        stage_timings["scheduler_total_s"] = stage_timings.get("scheduler_total_s", 0.0) + scheduler_delta
         err = KoraRuntimeError(
             error_type=ErrorType.DAG_INVALID,
             stage=Stage.SCHEDULER,
@@ -354,6 +357,12 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
             "outputs": outputs,
             "final": None,
         }
+        result["stage_timings"] = stage_timings
+        overall_delta = time.monotonic() - run_start
+        stage_timings["overall_total_s"] = stage_timings.get("overall_total_s", 0.0) + overall_delta
+        return result
+    scheduler_delta = time.monotonic() - scheduler_start
+    stage_timings["scheduler_total_s"] = stage_timings.get("scheduler_total_s", 0.0) + scheduler_delta
 
     for task_id in order:
         task = task_map[task_id]
@@ -368,9 +377,15 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
             try:
                 if task.run.kind == "det":
                     stage = Stage.DETERMINISTIC
+                    det_start = time.monotonic()
                     output = _run_det_task(task, state)
+                    det_delta = time.monotonic() - det_start
+                    stage_timings["det_total_s"] = stage_timings.get("det_total_s", 0.0) + det_delta
                     stage = Stage.VERIFY
+                    verify_start = time.monotonic()
                     verify_output(task, output)
+                    verify_delta = time.monotonic() - verify_start
+                    stage_timings["verify_total_s"] = stage_timings.get("verify_total_s", 0.0) + verify_delta
                     outputs[task.id] = output
                     events.append(
                         {
@@ -405,7 +420,15 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         break
 
+                    llm_start = time.monotonic()
                     output, adapter_result = _run_llm_task(task, outputs)
+                    llm_delta = time.monotonic() - llm_start
+                    stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
+                    stage = Stage.VERIFY
+                    verify_start = time.monotonic()
+                    verify_output(task, output)
+                    verify_delta = time.monotonic() - verify_start
+                    stage_timings["verify_total_s"] = stage_timings.get("verify_total_s", 0.0) + verify_delta
                     outputs[task.id] = output
                     events.append(
                         {
@@ -488,9 +511,13 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     "outputs": outputs,
                     "final": None,
                 }
+                result["stage_timings"] = stage_timings
+                overall_delta = time.monotonic() - run_start
+                stage_timings["overall_total_s"] = stage_timings.get("overall_total_s", 0.0) + overall_delta
+                return result
 
     final_output = outputs.get(graph.root)
-    return {
+    result = {
         "ok": True,
         "graph_id": graph.graph_id,
         "order": order,
@@ -498,3 +525,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
         "outputs": outputs,
         "final": final_output,
     }
+    result["stage_timings"] = stage_timings
+    overall_delta = time.monotonic() - run_start
+    stage_timings["overall_total_s"] = stage_timings.get("overall_total_s", 0.0) + overall_delta
+    return result

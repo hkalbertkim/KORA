@@ -329,6 +329,8 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     state: dict[str, Any] = {}
     state["outputs"] = outputs
+    stage_timings: dict[str, float] = {}
+    state["stage_timings"] = stage_timings
     order: list[str] = []
 
     try:

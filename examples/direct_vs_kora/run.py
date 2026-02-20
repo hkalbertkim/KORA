@@ -158,8 +158,16 @@ def _run_det_no_schema_case() -> dict[str, Any]:
     }
 
 
-def _run_adaptive_demo_case() -> dict[str, Any]:
+def _run_adaptive_demo_case_with_policy(
+    adaptive_policy: dict[str, Any],
+    *,
+    mini_confidence: float | None,
+    gate_confidence: float | None = 0.2,
+    full_confidence: float | None = 0.95,
+) -> dict[str, Any]:
     class DemoMiniAdapter(BaseAdapter):
+        call_count = 0
+
         def run(
             self,
             *,
@@ -169,6 +177,10 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
             output_schema: dict[str, Any],
         ) -> dict[str, Any]:
             del input, budget, output_schema
+            DemoMiniAdapter.call_count += 1
+            meta: dict[str, Any] = {"adapter": "demo_mini", "model": "demo-mini"}
+            if mini_confidence is not None:
+                meta["confidence"] = mini_confidence
             return {
                 "ok": True,
                 "output": {
@@ -177,10 +189,12 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
                     "answer": "demo mini answer",
                 },
                 "usage": {"tokens_in": 5, "tokens_out": 5},
-                "meta": {"adapter": "demo_mini", "model": "demo-mini", "confidence": 0.1},
+                "meta": meta,
             }
 
     class DemoGateAdapter(BaseAdapter):
+        call_count = 0
+
         def run(
             self,
             *,
@@ -190,6 +204,10 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
             output_schema: dict[str, Any],
         ) -> dict[str, Any]:
             del input, budget, output_schema
+            DemoGateAdapter.call_count += 1
+            meta: dict[str, Any] = {"adapter": "demo_mini:gate", "model": "demo-gate"}
+            if gate_confidence is not None:
+                meta["confidence"] = gate_confidence
             return {
                 "ok": True,
                 "output": {
@@ -198,10 +216,12 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
                     "answer": "demo gate answer",
                 },
                 "usage": {"tokens_in": 1000, "tokens_out": 1000},
-                "meta": {"adapter": "demo_mini:gate", "model": "demo-gate", "confidence": 0.2},
+                "meta": meta,
             }
 
     class DemoFullAdapter(BaseAdapter):
+        call_count = 0
+
         def run(
             self,
             *,
@@ -211,6 +231,10 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
             output_schema: dict[str, Any],
         ) -> dict[str, Any]:
             del input, budget, output_schema
+            DemoFullAdapter.call_count += 1
+            meta: dict[str, Any] = {"adapter": "demo_mini:full", "model": "demo-full"}
+            if full_confidence is not None:
+                meta["confidence"] = full_confidence
             return {
                 "ok": True,
                 "output": {
@@ -219,7 +243,7 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
                     "answer": "demo full answer",
                 },
                 "usage": {"tokens_in": 50, "tokens_out": 50},
-                "meta": {"adapter": "demo_mini:full", "model": "demo-full", "confidence": 0.95},
+                "meta": meta,
             }
 
     graph = TaskGraph.model_validate(
@@ -251,14 +275,7 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
                     },
                     "policy": {
                         "on_fail": "fail",
-                        "adaptive": {
-                            "min_confidence_to_stop": 0.85,
-                            "min_voi_to_escalate": 0.2,
-                            "max_escalations": 2,
-                            "escalation_order": ["gate", "full"],
-                            "use_voi": True,
-                            "stage_costs": {"full": 1.0},
-                        },
+                        "adaptive": adaptive_policy,
                     },
                     "tags": [],
                 }
@@ -272,6 +289,9 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
     executor_module._AdapterRegistry.providers["demo_mini"] = DemoMiniAdapter
     executor_module._AdapterRegistry.providers["demo_mini:gate"] = DemoGateAdapter
     executor_module._AdapterRegistry.providers["demo_mini:full"] = DemoFullAdapter
+    DemoMiniAdapter.call_count = 0
+    DemoGateAdapter.call_count = 0
+    DemoFullAdapter.call_count = 0
 
     try:
         normalized = normalize_graph(graph)
@@ -304,12 +324,55 @@ def _run_adaptive_demo_case() -> dict[str, Any]:
             "llm_calls": len(llm_events),
             "tokens_in": tokens_in,
             "tokens_out": tokens_out,
+            "demo_call_counts": {
+                "demo_mini": DemoMiniAdapter.call_count,
+                "demo_mini:gate": DemoGateAdapter.call_count,
+                "demo_mini:full": DemoFullAdapter.call_count,
+            },
             "final_output": result["final"],
             "events": result["events"],
             "stage_timings": result.get("stage_timings", {}),
         },
         "comparison": {"llm_calls_reduced": 0, "tokens_in_reduced": 0, "tokens_out_reduced": 0},
     }
+
+
+def _run_adaptive_demo_case() -> dict[str, Any]:
+    return _run_adaptive_demo_case_with_policy(
+        {
+            "min_confidence_to_stop": 0.85,
+            "min_voi_to_escalate": 0.2,
+            "max_escalations": 2,
+            "escalation_order": ["gate", "full"],
+            "use_voi": True,
+            "stage_costs": {"full": 1.0},
+        },
+        mini_confidence=0.1,
+        gate_confidence=0.2,
+        full_confidence=0.95,
+    )
+
+
+def _run_adaptive_demo_latency_case() -> dict[str, Any]:
+    return _run_adaptive_demo_case_with_policy(
+        {"routing_profile": "latency", "escalation_order": ["gate", "full"]},
+        mini_confidence=None,
+        gate_confidence=0.2,
+        full_confidence=0.95,
+    )
+
+
+def _run_adaptive_demo_reliability_case() -> dict[str, Any]:
+    return _run_adaptive_demo_case_with_policy(
+        {
+            "routing_profile": "reliability",
+            "escalation_order": ["gate", "full"],
+            "stage_costs": {"gate": 1000.0},
+        },
+        mini_confidence=None,
+        gate_confidence=0.2,
+        full_confidence=0.95,
+    )
 
 
 def _stage_timing_breakdown(stage_timings: dict[str, Any] | None) -> dict[str, float] | None:
@@ -357,9 +420,12 @@ def _print_adaptive_routing_trace(case_name: str, events: list[dict[str, Any]] |
         voi = meta.get("voi")
         stop_reason = meta.get("stop_reason")
         cost_units = meta.get("cost_units")
+        self_consistency_triggered = meta.get("self_consistency_triggered")
+        self_consistency_triggered_reason = meta.get("self_consistency_triggered_reason")
         print(
             "- step={step} conf={confidence} unc={uncertainty} est_cost={estimated_next_cost} "
-            "voi={voi} stop={stop_reason} cost_units={cost_units}".format(
+            "voi={voi} stop={stop_reason} cost_units={cost_units} "
+            "sc_triggered={self_consistency_triggered} sc_reason={self_consistency_triggered_reason}".format(
                 step=step,
                 confidence=confidence,
                 uncertainty=uncertainty,
@@ -367,6 +433,8 @@ def _print_adaptive_routing_trace(case_name: str, events: list[dict[str, Any]] |
                 voi=voi,
                 stop_reason=stop_reason,
                 cost_units=cost_units,
+                self_consistency_triggered=self_consistency_triggered,
+                self_consistency_triggered_reason=self_consistency_triggered_reason,
             )
         )
 
@@ -377,6 +445,8 @@ def run_cases(offline: bool = False) -> dict[str, Any]:
         "long": _build_case(LONG_TEXT, offline=offline),
         "det_no_schema_short": _run_det_no_schema_case(),
         "adaptive_demo": _run_adaptive_demo_case(),
+        "adaptive_demo_latency": _run_adaptive_demo_latency_case(),
+        "adaptive_demo_reliability": _run_adaptive_demo_reliability_case(),
     }
 
     llm_calls_direct_total = sum(cases[name]["direct"]["llm_calls"] for name in ("short", "long"))
@@ -417,6 +487,9 @@ def main() -> None:
         print(f"- verify_total_s: {breakdown['verify_total_s']:.6f}")
         print(f"- overhead_s: {breakdown['overhead_s']:.6f}")
         print(f"- overhead_pct: {breakdown['overhead_pct']:.6f}")
+        demo_call_counts = payload["cases"][case_name]["kora"].get("demo_call_counts")
+        if isinstance(demo_call_counts, dict):
+            print(f"- demo_call_counts: {demo_call_counts}")
         print()
         _print_adaptive_routing_trace(case_name, payload["cases"][case_name]["kora"].get("events"))
 

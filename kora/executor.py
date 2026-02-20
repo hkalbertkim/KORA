@@ -577,8 +577,51 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             needs_self_consistency = isinstance(confidence_for_conf, bool) or not isinstance(
                                 confidence_for_conf, (int, float)
                             )
+                            estimated_next_cost = 1.0
+                            if next_stage_token is not None:
+                                if next_stage_token in adaptive.stage_costs:
+                                    cost_raw = adaptive.stage_costs.get(next_stage_token, 1.0)
+                                else:
+                                    cost_raw = stage_cost_estimates.get(next_stage_token, 1.0)
+                                if (
+                                    isinstance(cost_raw, (int, float))
+                                    and not isinstance(cost_raw, bool)
+                                    and cost_raw > 0
+                                ):
+                                    estimated_next_cost = float(cost_raw)
+
+                            remaining_units: float | None = None
+                            budget = task.policy.budget
+                            if budget is not None:
+                                max_tokens = budget.max_tokens
+                                if isinstance(max_tokens, (int, float)) and not isinstance(max_tokens, bool):
+                                    remaining_units = float(max_tokens)
+                                else:
+                                    max_time_ms = budget.max_time_ms
+                                    if (
+                                        isinstance(max_time_ms, (int, float))
+                                        and not isinstance(max_time_ms, bool)
+                                    ):
+                                        remaining_units = float(max_time_ms)
+
+                            self_consistency_triggered = False
+                            self_consistency_triggered_reason = "high_next_cost"
+                            if not needs_self_consistency:
+                                self_consistency_triggered_reason = "confidence_present"
+                            elif next_stage_token is None:
+                                self_consistency_triggered_reason = "no_next_stage"
+                            elif estimated_next_cost < adaptive.self_consistency_min_next_cost:
+                                self_consistency_triggered_reason = "next_cost_low"
+                            elif (
+                                remaining_units is not None
+                                and remaining_units < adaptive.self_consistency_min_remaining_budget
+                            ):
+                                self_consistency_triggered_reason = "budget_too_low"
+                            else:
+                                self_consistency_triggered = True
+
                             consistency_hashes: list[str] = []
-                            if needs_self_consistency:
+                            if self_consistency_triggered:
                                 serialized = json.dumps(
                                     output, sort_keys=True, separators=(",", ":"), ensure_ascii=True
                                 )
@@ -605,10 +648,16 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                                     counts[digest] = counts.get(digest, 0) + 1
                                 most_common_count = max(counts.values()) if counts else 1
                                 disagreement = 1.0 - (most_common_count / float(len(consistency_hashes)))
-                                final_meta = adapter_result.get("meta")
-                                if not isinstance(final_meta, dict):
-                                    final_meta = {}
-                                    adapter_result["meta"] = final_meta
+
+                            final_meta = adapter_result.get("meta")
+                            if not isinstance(final_meta, dict):
+                                final_meta = {}
+                                adapter_result["meta"] = final_meta
+                            final_meta["self_consistency_triggered"] = self_consistency_triggered
+                            final_meta["self_consistency_triggered_reason"] = (
+                                self_consistency_triggered_reason
+                            )
+                            if self_consistency_triggered:
                                 final_meta["self_consistency_samples"] = len(consistency_hashes)
                                 final_meta["self_consistency_disagreement"] = disagreement
                                 existing_uncertainty = final_meta.get("uncertainty")

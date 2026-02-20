@@ -90,6 +90,9 @@ class AdaptiveRoutingPolicy(BaseModel):
         default_factory=lambda: {"mini": 1.0, "gate": 3.0, "full": 10.0}
     )
     use_voi: bool = True
+    self_consistency_samples: int = 2
+    self_consistency_enabled: bool = True
+    self_consistency_max_tokens: int = 64
 
 
 class Task(BaseModel):

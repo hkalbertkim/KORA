@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import time
@@ -307,6 +308,7 @@ def _run_llm_task(
     outputs: dict[str, dict[str, Any]],
     *,
     adapter_override: str | None = None,
+    budget_override: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if task.run.kind != "llm":
         raise ValueError(f"task '{task.id}' is not an llm task")
@@ -317,6 +319,8 @@ def _run_llm_task(
     adapter_input.pop("skip_if", None)
 
     budget = task.policy.budget.model_dump() if task.policy.budget is not None else {}
+    if isinstance(budget_override, dict):
+        budget.update(budget_override)
     result = adapter.run(
         task_id=task.id,
         input=adapter_input,
@@ -373,11 +377,20 @@ def _apply_adaptive_confidence_policy(
         adapter_result["meta"] = meta
 
     confidence_raw = meta.get("confidence")
-    if isinstance(confidence_raw, bool) or not isinstance(confidence_raw, (int, float)):
-        return
+    confidence: float | None = None
+    if not isinstance(confidence_raw, bool) and isinstance(confidence_raw, (int, float)):
+        confidence = max(0.0, min(1.0, float(confidence_raw)))
 
-    confidence = max(0.0, min(1.0, float(confidence_raw)))
-    uncertainty = 1.0 - confidence
+    uncertainty: float | None = None
+    if confidence is not None:
+        uncertainty = 1.0 - confidence
+    else:
+        sc_disagreement = meta.get("self_consistency_disagreement")
+        if isinstance(sc_disagreement, (int, float)) and not isinstance(sc_disagreement, bool):
+            uncertainty = max(0.0, min(1.0, float(sc_disagreement)))
+        else:
+            return
+
     stage_cost = 1.0
     if next_stage_token is not None:
         if next_stage_token in adaptive.stage_costs:
@@ -388,10 +401,14 @@ def _apply_adaptive_confidence_policy(
             stage_cost = float(cost_raw)
     meta["estimated_next_cost"] = stage_cost
     voi = uncertainty / stage_cost
-    meta["uncertainty"] = uncertainty
+    existing_uncertainty = meta.get("uncertainty")
+    if isinstance(existing_uncertainty, (int, float)) and not isinstance(existing_uncertainty, bool):
+        meta["uncertainty"] = max(float(existing_uncertainty), uncertainty)
+    else:
+        meta["uncertainty"] = uncertainty
     meta["voi"] = voi
 
-    if confidence >= adaptive.min_confidence_to_stop:
+    if confidence is not None and confidence >= adaptive.min_confidence_to_stop:
         meta["escalate_recommended"] = False
         meta["stop_reason"] = "confident_enough"
         return
@@ -536,11 +553,78 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             else None
                         )
                         llm_start = time.monotonic()
-                        output, adapter_result = _run_llm_task(
-                            task,
-                            outputs,
-                            adapter_override=current_adapter,
-                        )
+                        output: dict[str, Any]
+                        adapter_result: dict[str, Any]
+                        if (
+                            adaptive is not None
+                            and adaptive.self_consistency_enabled
+                            and escalation_step == 0
+                        ):
+                            sample_count = max(1, int(adaptive.self_consistency_samples))
+                            reduced_budget = {"max_tokens": int(adaptive.self_consistency_max_tokens)}
+                            output, adapter_result = _run_llm_task(
+                                task,
+                                outputs,
+                                adapter_override=current_adapter,
+                                budget_override=reduced_budget,
+                            )
+                            meta_for_conf = adapter_result.get("meta")
+                            confidence_for_conf = (
+                                meta_for_conf.get("confidence")
+                                if isinstance(meta_for_conf, dict)
+                                else None
+                            )
+                            needs_self_consistency = isinstance(confidence_for_conf, bool) or not isinstance(
+                                confidence_for_conf, (int, float)
+                            )
+                            consistency_hashes: list[str] = []
+                            if needs_self_consistency:
+                                serialized = json.dumps(
+                                    output, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                                )
+                                consistency_hashes.append(
+                                    hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+                                )
+                                for _ in range(sample_count - 1):
+                                    sampled_output, sampled_result = _run_llm_task(
+                                        task,
+                                        outputs,
+                                        adapter_override=current_adapter,
+                                        budget_override=reduced_budget,
+                                    )
+                                    output = sampled_output
+                                    adapter_result = sampled_result
+                                    sampled_serialized = json.dumps(
+                                        sampled_output, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                                    )
+                                    consistency_hashes.append(
+                                        hashlib.sha256(sampled_serialized.encode("utf-8")).hexdigest()
+                                    )
+                                counts: dict[str, int] = {}
+                                for digest in consistency_hashes:
+                                    counts[digest] = counts.get(digest, 0) + 1
+                                most_common_count = max(counts.values()) if counts else 1
+                                disagreement = 1.0 - (most_common_count / float(len(consistency_hashes)))
+                                final_meta = adapter_result.get("meta")
+                                if not isinstance(final_meta, dict):
+                                    final_meta = {}
+                                    adapter_result["meta"] = final_meta
+                                final_meta["self_consistency_samples"] = len(consistency_hashes)
+                                final_meta["self_consistency_disagreement"] = disagreement
+                                existing_uncertainty = final_meta.get("uncertainty")
+                                if (
+                                    isinstance(existing_uncertainty, (int, float))
+                                    and not isinstance(existing_uncertainty, bool)
+                                ):
+                                    final_meta["uncertainty"] = max(float(existing_uncertainty), disagreement)
+                                else:
+                                    final_meta["uncertainty"] = disagreement
+                        else:
+                            output, adapter_result = _run_llm_task(
+                                task,
+                                outputs,
+                                adapter_override=current_adapter,
+                            )
                         llm_delta = time.monotonic() - llm_start
                         stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
                         usage = adapter_result.get("usage")

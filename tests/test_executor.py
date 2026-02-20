@@ -589,3 +589,110 @@ def test_adaptive_budget_remaining_low_blocks_escalation() -> None:
     meta = llm_events[0]["meta"]
     assert meta["stop_reason"] == "budget_remaining_low"
     assert meta["escalate_recommended"] is False
+
+
+def test_adaptive_self_consistency_uncertainty_drives_voi_when_confidence_missing() -> None:
+    from kora import executor as executor_module
+
+    class AlternatingMiniAdapter(BaseAdapter):
+        call_count = 0
+        seen_max_tokens: list[int] = []
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, output_schema
+            AlternatingMiniAdapter.call_count += 1
+            AlternatingMiniAdapter.seen_max_tokens.append(int(budget.get("max_tokens", 0)))
+            answer = "variant-a" if AlternatingMiniAdapter.call_count % 2 == 1 else "variant-b"
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": answer,
+                },
+                "usage": {"tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini"},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-self-consistency",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "min_voi_to_escalate": 0.2,
+                            "max_escalations": 1,
+                            "escalation_order": ["gate"],
+                            "stage_costs": {"gate": 10.0},
+                            "use_voi": True,
+                            "self_consistency_enabled": True,
+                            "self_consistency_samples": 2,
+                            "self_consistency_max_tokens": 64,
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    executor_module._AdapterRegistry.providers["mock_mini"] = AlternatingMiniAdapter
+    AlternatingMiniAdapter.call_count = 0
+    AlternatingMiniAdapter.seen_max_tokens = []
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+
+    assert result["ok"] is True
+    llm_events = [event for event in result["events"] if event["task_id"] == "task_llm"]
+    assert len(llm_events) == 1
+    assert AlternatingMiniAdapter.call_count == 2
+    assert AlternatingMiniAdapter.seen_max_tokens == [64, 64]
+    meta = llm_events[0]["meta"]
+    assert meta["self_consistency_samples"] == 2
+    assert meta["self_consistency_disagreement"] == 0.5
+    assert meta["uncertainty"] == 0.5
+    assert meta["stop_reason"] == "voi_too_low"
+    assert meta["escalate_recommended"] is False

@@ -83,8 +83,13 @@ class AdaptiveRoutingPolicy(BaseModel):
     """Adaptive routing configuration knobs (schema only, no runtime behavior)."""
 
     min_confidence_to_stop: float = 0.85
+    min_voi_to_escalate: float = 0.2
     max_escalations: int = 2
     escalation_order: list[str] = Field(default_factory=lambda: ["mini", "gate", "full"])
+    stage_costs: dict[str, float] = Field(
+        default_factory=lambda: {"mini": 1.0, "gate": 3.0, "full": 10.0}
+    )
+    use_voi: bool = True
 
 
 class Task(BaseModel):

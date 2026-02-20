@@ -351,7 +351,11 @@ def _resolve_escalation_adapter(base_adapter_name: str, stage_token: str) -> str
     return None
 
 
-def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any]) -> None:
+def _apply_adaptive_confidence_policy(
+    task: Task,
+    adapter_result: dict[str, Any],
+    next_stage_token: str | None,
+) -> None:
     adaptive = task.policy.adaptive
     if adaptive is None:
         return
@@ -365,10 +369,25 @@ def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any]
     if isinstance(confidence_raw, bool) or not isinstance(confidence_raw, (int, float)):
         return
 
-    confidence = float(confidence_raw)
+    confidence = max(0.0, min(1.0, float(confidence_raw)))
+    uncertainty = 1.0 - confidence
+    stage_cost = 1.0
+    if next_stage_token is not None:
+        cost_raw = adaptive.stage_costs.get(next_stage_token, 1.0)
+        if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool) and cost_raw > 0:
+            stage_cost = float(cost_raw)
+    voi = uncertainty / stage_cost
+    meta["uncertainty"] = uncertainty
+    meta["voi"] = voi
+
     if confidence >= adaptive.min_confidence_to_stop:
         meta["escalate_recommended"] = False
         meta["stop_reason"] = "confident_enough"
+        return
+
+    if adaptive.use_voi and voi < adaptive.min_voi_to_escalate:
+        meta["escalate_recommended"] = False
+        meta["stop_reason"] = "voi_too_low"
         return
 
     meta["escalate_recommended"] = True
@@ -483,6 +502,11 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     llm_events_for_attempt: list[dict[str, Any]] = []
 
                     while True:
+                        next_stage_token = (
+                            escalation_order[escalation_step]
+                            if escalation_step < len(escalation_order)
+                            else None
+                        )
                         llm_start = time.monotonic()
                         output, adapter_result = _run_llm_task(
                             task,
@@ -491,7 +515,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         llm_delta = time.monotonic() - llm_start
                         stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
-                        _apply_adaptive_confidence_policy(task, adapter_result)
+                        _apply_adaptive_confidence_policy(task, adapter_result, next_stage_token)
 
                         llm_events_for_attempt.append(
                             {

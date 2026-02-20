@@ -336,6 +336,38 @@ def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[
     return output, result
 
 
+def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any], state: dict[str, Any]) -> None:
+    adaptive = task.policy.adaptive
+    if adaptive is None:
+        return
+
+    meta = adapter_result.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        adapter_result["meta"] = meta
+
+    confidence_raw = meta.get("confidence")
+    if isinstance(confidence_raw, bool) or not isinstance(confidence_raw, (int, float)):
+        return
+
+    confidence = float(confidence_raw)
+    if confidence >= adaptive.min_confidence_to_stop:
+        meta["escalate_recommended"] = False
+        meta["stop_reason"] = "confident_enough"
+        return
+
+    escalation_counts = state.setdefault("adaptive_escalation_counts", {})
+    escalations = int(escalation_counts.get(task.id, 0))
+    if escalations < adaptive.max_escalations:
+        escalation_counts[task.id] = escalations + 1
+        meta["escalate_recommended"] = True
+        meta["stop_reason"] = "escalate_confidence"
+        return
+
+    meta["escalate_recommended"] = False
+    meta["stop_reason"] = "max_escalations"
+
+
 def run_graph(graph: TaskGraph) -> dict[str, Any]:
     """Execute a normalized task graph with structured success/failure contracts."""
     run_start = time.monotonic()
@@ -440,6 +472,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     output, adapter_result = _run_llm_task(task, outputs)
                     llm_delta = time.monotonic() - llm_start
                     stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
+                    _apply_adaptive_confidence_policy(task, adapter_result, state)
                     stage = Stage.VERIFY
                     verify_start = time.monotonic()
                     verify_output(task, output)

@@ -123,7 +123,7 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
                     "answer": "gate result",
                 },
                 "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
-                "meta": {"adapter": "mock_gate", "model": "mock-gate", "confidence": 0.2},
+                "meta": {"adapter": "mock_mini:gate", "model": "mock-gate", "confidence": 0.2},
             }
 
     class MockFullAdapter(BaseAdapter):
@@ -147,7 +147,7 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
                     "answer": "full result",
                 },
                 "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
-                "meta": {"adapter": "mock_full", "model": "mock-full", "confidence": 0.95},
+                "meta": {"adapter": "mock_mini:full", "model": "mock-full", "confidence": 0.95},
             }
 
     graph = TaskGraph.model_validate(
@@ -185,7 +185,7 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
                         "adaptive": {
                             "min_confidence_to_stop": 0.85,
                             "max_escalations": 2,
-                            "escalation_order": ["mock_gate", "mock_full"],
+                            "escalation_order": ["gate", "full"],
                         },
                     },
                     "tags": [],
@@ -195,11 +195,11 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
     )
 
     old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
-    old_gate = executor_module._AdapterRegistry.providers.get("mock_gate")
-    old_full = executor_module._AdapterRegistry.providers.get("mock_full")
+    old_gate = executor_module._AdapterRegistry.providers.get("mock_mini:gate")
+    old_full = executor_module._AdapterRegistry.providers.get("mock_mini:full")
     executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
-    executor_module._AdapterRegistry.providers["mock_gate"] = MockGateAdapter
-    executor_module._AdapterRegistry.providers["mock_full"] = MockFullAdapter
+    executor_module._AdapterRegistry.providers["mock_mini:gate"] = MockGateAdapter
+    executor_module._AdapterRegistry.providers["mock_mini:full"] = MockFullAdapter
     MockMiniAdapter.call_count = 0
     MockGateAdapter.call_count = 0
     MockFullAdapter.call_count = 0
@@ -213,13 +213,13 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
         else:
             executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
         if old_gate is None:
-            del executor_module._AdapterRegistry.providers["mock_gate"]
+            del executor_module._AdapterRegistry.providers["mock_mini:gate"]
         else:
-            executor_module._AdapterRegistry.providers["mock_gate"] = old_gate
+            executor_module._AdapterRegistry.providers["mock_mini:gate"] = old_gate
         if old_full is None:
-            del executor_module._AdapterRegistry.providers["mock_full"]
+            del executor_module._AdapterRegistry.providers["mock_mini:full"]
         else:
-            executor_module._AdapterRegistry.providers["mock_full"] = old_full
+            executor_module._AdapterRegistry.providers["mock_mini:full"] = old_full
 
     assert result["ok"] is True
     llm_events = [event for event in result["events"] if event["task_id"] == "task_llm"]
@@ -229,8 +229,11 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
     assert MockGateAdapter.call_count == 1
     assert MockFullAdapter.call_count == 1
     assert llm_events[0]["meta"]["adapter"] == "mock_mini"
-    assert llm_events[1]["meta"]["adapter"] == "mock_gate"
-    assert llm_events[2]["meta"]["adapter"] == "mock_full"
+    assert llm_events[1]["meta"]["adapter"] == "mock_mini:gate"
+    assert llm_events[2]["meta"]["adapter"] == "mock_mini:full"
+    assert llm_events[0]["escalation_step"] == 0
+    assert llm_events[1]["escalation_step"] == 1
+    assert llm_events[2]["escalation_step"] == 2
     assert llm_events[0]["meta"]["model"] == "mock-mini"
     assert llm_events[1]["meta"]["model"] == "mock-gate"
     assert llm_events[2]["meta"]["model"] == "mock-full"

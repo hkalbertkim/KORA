@@ -342,7 +342,16 @@ def _run_llm_task(
     return output, result
 
 
-def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any], state: dict[str, Any]) -> None:
+def _resolve_escalation_adapter(base_adapter_name: str, stage_token: str) -> str | None:
+    if stage_token in _AdapterRegistry.providers:
+        return stage_token
+    candidate = f"{base_adapter_name}:{stage_token}"
+    if candidate in _AdapterRegistry.providers:
+        return candidate
+    return None
+
+
+def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any]) -> None:
     adaptive = task.policy.adaptive
     if adaptive is None:
         return
@@ -362,16 +371,8 @@ def _apply_adaptive_confidence_policy(task: Task, adapter_result: dict[str, Any]
         meta["stop_reason"] = "confident_enough"
         return
 
-    escalation_counts = state.setdefault("adaptive_escalation_counts", {})
-    escalations = int(escalation_counts.get(task.id, 0))
-    if escalations < adaptive.max_escalations:
-        escalation_counts[task.id] = escalations + 1
-        meta["escalate_recommended"] = True
-        meta["stop_reason"] = "escalate_confidence"
-        return
-
-    meta["escalate_recommended"] = False
-    meta["stop_reason"] = "max_escalations"
+    meta["escalate_recommended"] = True
+    meta["stop_reason"] = "escalate_confidence"
 
 
 def run_graph(graph: TaskGraph) -> dict[str, Any]:
@@ -476,8 +477,9 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
 
                     adaptive = task.policy.adaptive
                     escalation_order = list(adaptive.escalation_order) if adaptive is not None else []
-                    escalation_idx = 0
+                    escalation_step = 0
                     current_adapter = task.run.spec.adapter
+                    base_adapter_name = task.run.spec.adapter
                     llm_events_for_attempt: list[dict[str, Any]] = []
 
                     while True:
@@ -489,12 +491,13 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         llm_delta = time.monotonic() - llm_start
                         stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
-                        _apply_adaptive_confidence_policy(task, adapter_result, state)
+                        _apply_adaptive_confidence_policy(task, adapter_result)
 
                         llm_events_for_attempt.append(
                             {
                                 "task_id": task.id,
                                 "attempt": attempt,
+                                "escalation_step": escalation_step,
                                 "status": "ok",
                                 "stage": Stage.ADAPTER.value,
                                 "time_ms": int(llm_delta * 1000),
@@ -508,23 +511,30 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         if not should_escalate:
                             break
 
-                        if adaptive is None or escalation_idx >= adaptive.max_escalations:
+                        if adaptive is None:
                             break
 
-                        if escalation_idx >= len(escalation_order):
+                        if escalation_step >= adaptive.max_escalations:
+                            if isinstance(meta, dict):
+                                meta["stop_reason"] = "max_escalations"
+                                meta["escalate_recommended"] = False
+                            break
+
+                        if escalation_step >= len(escalation_order):
                             if isinstance(meta, dict):
                                 meta["stop_reason"] = "escalation_adapter_missing"
                                 meta["escalate_recommended"] = False
                             break
 
-                        next_adapter = escalation_order[escalation_idx]
-                        escalation_idx += 1
-                        if next_adapter not in _AdapterRegistry.providers:
+                        stage_token = escalation_order[escalation_step]
+                        next_adapter = _resolve_escalation_adapter(base_adapter_name, stage_token)
+                        if next_adapter is None:
                             if isinstance(meta, dict):
                                 meta["stop_reason"] = "escalation_adapter_missing"
                                 meta["escalate_recommended"] = False
                             break
 
+                        escalation_step += 1
                         current_adapter = next_adapter
 
                     stage = Stage.VERIFY

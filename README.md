@@ -88,20 +88,25 @@ See `docs/benchmark.md` for broader benchmark context.
 
 ## Adaptive Routing Example
 
-Run command:
+Run:
+
 ```bash
 python3 examples/direct_vs_kora/run.py
 ```
 
 ```text
-- step=0 conf=0.1 unc=0.9 est_cost=1.0 voi=0.9 stop=escalate_confidence cost_units=10.0
-- step=1 conf=0.2 unc=0.8 est_cost=1.0 voi=0.8 stop=escalate_confidence cost_units=2000.0
-- step=2 conf=0.95 unc=0.050000000000000044 est_cost=1.0 voi=0.050000000000000044 stop=confident_enough cost_units=100.0
+Adaptive Routing Trace (adaptive_demo_latency)
+- step=0 conf=None unc=None est_cost=None voi=None stop=None cost_units=10.0 sc_triggered=False sc_reason=disabled_by_profile
 ```
 
-- `escalation_step` indicates multi-stage adapter escalation within a single task execution.
-- `stop_reason` indicates why routing stopped (`confident_enough`, `voi_too_low`, `budget_remaining_low`).
-- `cost_units` is observed per-call cost; `estimated_next_cost` is predicted next-stage cost used for VoI gating.
+```text
+Adaptive Routing Trace (adaptive_demo_reliability)
+- step=0 conf=None unc=0.33333333333333337 est_cost=1000.0 voi=0.0003333333333333334 stop=voi_too_low cost_units=10.0 sc_triggered=True sc_reason=high_next_cost
+```
+
+- `routing_profile` controls performance intent (latency vs reliability) via resolved adaptive defaults.
+- Self-consistency is gated: it triggers only when confidence is missing and next-stage cost is high (or other gates).
+- Disagreement-derived uncertainty feeds VoI to prevent expensive escalation when expected value is low.
 
 KORA is an execution architecture that structures intelligence before invoking large language models.
 

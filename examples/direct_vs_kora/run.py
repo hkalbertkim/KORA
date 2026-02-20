@@ -164,6 +164,7 @@ def _run_adaptive_demo_case_with_policy(
     mini_confidence: float | None,
     gate_confidence: float | None = 0.2,
     full_confidence: float | None = 0.95,
+    mini_alternating_output: bool = False,
 ) -> dict[str, Any]:
     class DemoMiniAdapter(BaseAdapter):
         call_count = 0
@@ -181,12 +182,19 @@ def _run_adaptive_demo_case_with_policy(
             meta: dict[str, Any] = {"adapter": "demo_mini", "model": "demo-mini"}
             if mini_confidence is not None:
                 meta["confidence"] = mini_confidence
+            mini_answer = "demo mini answer"
+            if mini_alternating_output:
+                mini_answer = (
+                    "demo mini answer A"
+                    if DemoMiniAdapter.call_count % 2 == 1
+                    else "demo mini answer B"
+                )
             return {
                 "ok": True,
                 "output": {
                     "status": "ok",
                     "task_id": task_id,
-                    "answer": "demo mini answer",
+                    "answer": mini_answer,
                 },
                 "usage": {"tokens_in": 5, "tokens_out": 5},
                 "meta": meta,
@@ -372,6 +380,7 @@ def _run_adaptive_demo_reliability_case() -> dict[str, Any]:
         mini_confidence=None,
         gate_confidence=0.2,
         full_confidence=0.95,
+        mini_alternating_output=True,
     )
 
 
@@ -422,6 +431,9 @@ def _print_adaptive_routing_trace(case_name: str, events: list[dict[str, Any]] |
         cost_units = meta.get("cost_units")
         self_consistency_triggered = meta.get("self_consistency_triggered")
         self_consistency_triggered_reason = meta.get("self_consistency_triggered_reason")
+        if self_consistency_triggered is None:
+            self_consistency_triggered = False
+            self_consistency_triggered_reason = "disabled_by_profile"
         print(
             "- step={step} conf={confidence} unc={uncertainty} est_cost={estimated_next_cost} "
             "voi={voi} stop={stop_reason} cost_units={cost_units} "

@@ -82,6 +82,7 @@ class Policy(BaseModel):
 class AdaptiveRoutingPolicy(BaseModel):
     """Adaptive routing configuration knobs (schema only, no runtime behavior)."""
 
+    routing_profile: Literal["latency", "cost", "reliability", "balanced"] = "balanced"
     min_confidence_to_stop: float = 0.85
     min_voi_to_escalate: float = 0.2
     max_escalations: int = 2
@@ -93,6 +94,48 @@ class AdaptiveRoutingPolicy(BaseModel):
     self_consistency_samples: int = 2
     self_consistency_enabled: bool = True
     self_consistency_max_tokens: int = 64
+
+    def resolved(self) -> "AdaptiveRoutingPolicy":
+        profile_defaults: dict[str, dict[str, Any]] = {
+            "latency": {
+                "use_voi": False,
+                "self_consistency_enabled": False,
+                "max_escalations": 0,
+                "min_confidence_to_stop": 0.75,
+            },
+            "cost": {
+                "use_voi": True,
+                "min_voi_to_escalate": 0.2,
+                "self_consistency_enabled": True,
+                "self_consistency_samples": 2,
+                "self_consistency_max_tokens": 64,
+                "max_escalations": 2,
+            },
+            "reliability": {
+                "use_voi": True,
+                "min_voi_to_escalate": 0.1,
+                "self_consistency_enabled": True,
+                "self_consistency_samples": 3,
+                "self_consistency_max_tokens": 96,
+                "max_escalations": 2,
+                "min_confidence_to_stop": 0.9,
+            },
+            "balanced": {
+                "use_voi": True,
+                "min_voi_to_escalate": 0.2,
+                "self_consistency_enabled": True,
+                "self_consistency_samples": 2,
+                "self_consistency_max_tokens": 64,
+                "max_escalations": 2,
+            },
+        }
+        resolved_policy = self.model_copy(deep=True)
+        explicitly_set = set(self.model_fields_set)
+        defaults = profile_defaults.get(self.routing_profile, profile_defaults["balanced"])
+        for field_name, default_value in defaults.items():
+            if field_name not in explicitly_set:
+                setattr(resolved_policy, field_name, default_value)
+        return resolved_policy
 
 
 class Task(BaseModel):

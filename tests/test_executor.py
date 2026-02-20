@@ -696,3 +696,163 @@ def test_adaptive_self_consistency_uncertainty_drives_voi_when_confidence_missin
     assert meta["uncertainty"] == 0.5
     assert meta["stop_reason"] == "voi_too_low"
     assert meta["escalate_recommended"] is False
+
+
+def test_adaptive_latency_profile_disables_self_consistency_sampling() -> None:
+    from kora import executor as executor_module
+
+    class MockMiniAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockMiniAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "single"},
+                "usage": {"tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini"},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-latency-profile",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "routing_profile": "latency",
+                            "escalation_order": ["gate"],
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
+    MockMiniAdapter.call_count = 0
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+
+    assert result["ok"] is True
+    assert MockMiniAdapter.call_count == 1
+
+
+def test_adaptive_reliability_profile_uses_three_self_consistency_samples() -> None:
+    from kora import executor as executor_module
+
+    class MockMiniAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockMiniAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "stable"},
+                "usage": {"tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini"},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-reliability-profile",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "routing_profile": "reliability",
+                            "escalation_order": ["gate"],
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
+    MockMiniAdapter.call_count = 0
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+
+    assert result["ok"] is True
+    assert MockMiniAdapter.call_count == 3

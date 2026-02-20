@@ -362,12 +362,12 @@ def _stage_token_from_adapter_name(adapter_name: str) -> str:
 
 
 def _apply_adaptive_confidence_policy(
+    adaptive: Any,
     task: Task,
     adapter_result: dict[str, Any],
     next_stage_token: str | None,
     stage_cost_estimates: dict[str, float],
 ) -> None:
-    adaptive = task.policy.adaptive
     if adaptive is None:
         return
 
@@ -539,7 +539,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         break
 
-                    adaptive = task.policy.adaptive
+                    adaptive = task.policy.adaptive.resolved() if task.policy.adaptive is not None else None
                     escalation_order = list(adaptive.escalation_order) if adaptive is not None else []
                     escalation_step = 0
                     current_adapter = task.run.spec.adapter
@@ -656,6 +656,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             stage_cost_estimates[stage_token_key] = 0.3 * cost_units + (1.0 - 0.3) * old_est
 
                         _apply_adaptive_confidence_policy(
+                            adaptive,
                             task,
                             adapter_result,
                             next_stage_token,

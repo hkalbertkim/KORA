@@ -178,6 +178,43 @@ def _stage_timing_breakdown(stage_timings: dict[str, Any] | None) -> dict[str, f
     }
 
 
+def _print_adaptive_routing_trace(case_name: str, events: list[dict[str, Any]] | None) -> None:
+    if not isinstance(events, list):
+        return
+    llm_events = [
+        event
+        for event in events
+        if event.get("task_id") == "task_llm" and not event.get("skipped", False)
+    ]
+    print(f"Adaptive Routing Trace ({case_name})")
+    if not llm_events:
+        print("- (none)")
+        return
+    for event in llm_events:
+        meta = event.get("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        step = event.get("escalation_step")
+        confidence = meta.get("confidence")
+        uncertainty = meta.get("uncertainty")
+        estimated_next_cost = meta.get("estimated_next_cost")
+        voi = meta.get("voi")
+        stop_reason = meta.get("stop_reason")
+        cost_units = meta.get("cost_units")
+        print(
+            "- step={step} conf={confidence} unc={uncertainty} est_cost={estimated_next_cost} "
+            "voi={voi} stop={stop_reason} cost_units={cost_units}".format(
+                step=step,
+                confidence=confidence,
+                uncertainty=uncertainty,
+                estimated_next_cost=estimated_next_cost,
+                voi=voi,
+                stop_reason=stop_reason,
+                cost_units=cost_units,
+            )
+        )
+
+
 def run_cases(offline: bool = False) -> dict[str, Any]:
     cases = {
         "short": _build_case(SHORT_TEXT, offline=offline),
@@ -223,6 +260,8 @@ def main() -> None:
         print(f"- verify_total_s: {breakdown['verify_total_s']:.6f}")
         print(f"- overhead_s: {breakdown['overhead_s']:.6f}")
         print(f"- overhead_pct: {breakdown['overhead_pct']:.6f}")
+        print()
+        _print_adaptive_routing_trace(case_name, payload["cases"][case_name]["kora"].get("events"))
 
 
 if __name__ == "__main__":

@@ -64,19 +64,25 @@ Run these two commands to compare direct inference with deterministic-first stru
 
 ## Benchmark Snapshot
 
-In controlled tests using `gpt-4o-mini`:
+Run:
 
-| Metric | Direct | KORA | Reduction |
-|--------|--------|------|-----------|
-| LLM Calls | 2 | 1 | -50% |
-| Tokens In | 359 | 225 | -37% |
-| Tokens Out | 121 | 85 | -30% |
+```bash
+python3 examples/direct_vs_kora/run.py
+```
 
-Outputs were equivalent.
+Stage timing evidence (seconds):
 
-Structured execution reduced invocation frequency without degrading capability.
+| Case | overall_total_s | llm_total_s | verify_total_s | overhead_s |
+|------|----------------:|------------:|---------------:|-----------:|
+| short | 0.000754 | 0.000000 | 0.000725 | 0.000019 |
+| long | 2.134392 | 2.130928 | 0.003408 | 0.000039 |
+| det_no_schema_short | 0.000017 | 0.000000 | 0.000000 | 0.000007 |
 
-See `docs/benchmark.md`.
+- Long case: overhead is approximately zero in absolute terms when LLM latency dominates.
+- `det_no_schema_short`: `verify_total_s` is approximately zero due to deterministic no-schema fast-path.
+- For microsecond-scale runs, `overhead_pct` is not a stable signal; use absolute seconds.
+
+See `docs/benchmark.md` for broader benchmark context.
 
 KORA is an execution architecture that structures intelligence before invoking large language models.
 

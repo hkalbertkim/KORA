@@ -64,7 +64,7 @@ Run these two commands to compare direct inference with deterministic-first stru
 
 ## Benchmark Snapshot
 
-Run:
+Run command:
 
 ```bash
 python3 examples/direct_vs_kora/run.py

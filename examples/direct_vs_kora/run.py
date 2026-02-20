@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from kora import executor as executor_module
 from kora.adapters.mock import MockAdapter
 from kora.adapters.openai_adapter import OpenAIAdapter, harden_schema_for_openai
+from kora.adapters.base import BaseAdapter
 from kora.executor import normalize_answer_json_string, run_graph
 from kora.task_ir import TaskGraph, normalize_graph, validate_graph
 
@@ -156,6 +158,160 @@ def _run_det_no_schema_case() -> dict[str, Any]:
     }
 
 
+def _run_adaptive_demo_case() -> dict[str, Any]:
+    class DemoMiniAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "demo mini answer",
+                },
+                "usage": {"tokens_in": 5, "tokens_out": 5},
+                "meta": {"adapter": "demo_mini", "model": "demo-mini", "confidence": 0.1},
+            }
+
+    class DemoGateAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "demo gate answer",
+                },
+                "usage": {"tokens_in": 1000, "tokens_out": 1000},
+                "meta": {"adapter": "demo_mini:gate", "model": "demo-gate", "confidence": 0.2},
+            }
+
+    class DemoFullAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "demo full answer",
+                },
+                "usage": {"tokens_in": 50, "tokens_out": 50},
+                "meta": {"adapter": "demo_mini:full", "model": "demo-full", "confidence": 0.95},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-demo",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 5000, "max_tokens": 10000, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "demo_mini",
+                            "input": {"question": "adaptive demo question"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "min_voi_to_escalate": 0.2,
+                            "max_escalations": 2,
+                            "escalation_order": ["gate", "full"],
+                            "use_voi": True,
+                            "stage_costs": {"full": 1.0},
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("demo_mini")
+    old_gate = executor_module._AdapterRegistry.providers.get("demo_mini:gate")
+    old_full = executor_module._AdapterRegistry.providers.get("demo_mini:full")
+    executor_module._AdapterRegistry.providers["demo_mini"] = DemoMiniAdapter
+    executor_module._AdapterRegistry.providers["demo_mini:gate"] = DemoGateAdapter
+    executor_module._AdapterRegistry.providers["demo_mini:full"] = DemoFullAdapter
+
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["demo_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["demo_mini"] = old_mini
+        if old_gate is None:
+            del executor_module._AdapterRegistry.providers["demo_mini:gate"]
+        else:
+            executor_module._AdapterRegistry.providers["demo_mini:gate"] = old_gate
+        if old_full is None:
+            del executor_module._AdapterRegistry.providers["demo_mini:full"]
+        else:
+            executor_module._AdapterRegistry.providers["demo_mini:full"] = old_full
+
+    llm_events = [
+        event
+        for event in result["events"]
+        if event["task_id"] == "task_llm" and not event.get("skipped", False)
+    ]
+    tokens_in = sum(int(event.get("usage", {}).get("tokens_in", 0)) for event in llm_events)
+    tokens_out = sum(int(event.get("usage", {}).get("tokens_out", 0)) for event in llm_events)
+    return {
+        "direct": {"ok": True, "llm_calls": 0, "tokens_in": 0, "tokens_out": 0, "error": None, "output": {}, "model": "n/a"},
+        "kora": {
+            "llm_calls": len(llm_events),
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "final_output": result["final"],
+            "events": result["events"],
+            "stage_timings": result.get("stage_timings", {}),
+        },
+        "comparison": {"llm_calls_reduced": 0, "tokens_in_reduced": 0, "tokens_out_reduced": 0},
+    }
+
+
 def _stage_timing_breakdown(stage_timings: dict[str, Any] | None) -> dict[str, float] | None:
     if not isinstance(stage_timings, dict):
         return None
@@ -220,6 +376,7 @@ def run_cases(offline: bool = False) -> dict[str, Any]:
         "short": _build_case(SHORT_TEXT, offline=offline),
         "long": _build_case(LONG_TEXT, offline=offline),
         "det_no_schema_short": _run_det_no_schema_case(),
+        "adaptive_demo": _run_adaptive_demo_case(),
     }
 
     llm_calls_direct_total = sum(cases[name]["direct"]["llm_calls"] for name in ("short", "long"))

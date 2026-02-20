@@ -72,15 +72,17 @@ python3 examples/direct_vs_kora/run.py
 
 Stage timing evidence (seconds):
 
-| Case | overall_total_s | llm_total_s | verify_total_s | overhead_s |
-|------|----------------:|------------:|---------------:|-----------:|
-| short | 0.000754 | 0.000000 | 0.000725 | 0.000019 |
-| long | 2.134392 | 2.130928 | 0.003408 | 0.000039 |
-| det_no_schema_short | 0.000017 | 0.000000 | 0.000000 | 0.000007 |
+| Case                | overall_total_s | llm_total_s | verify_total_s | overhead_s |
+|---------------------|-----------------|-------------|----------------|------------|
+| short               | 0.000754        | 0.000000    | 0.000725       | 0.000019   |
+| long                | 2.134392        | 2.130928    | 0.003408       | 0.000039   |
+| det_no_schema_short | 0.000017        | 0.000000    | 0.000000       | 0.000007   |
 
-- Long case: overhead is approximately zero in absolute terms when LLM latency dominates.
-- `det_no_schema_short`: `verify_total_s` is approximately zero due to deterministic no-schema fast-path.
-- For microsecond-scale runs, `overhead_pct` is not a stable signal; use absolute seconds.
+### Interpretation
+
+- In LLM-dominant workloads (`long`), orchestration overhead is near-zero in absolute wall-clock seconds.
+- Deterministic tasks without a verification schema bypass `verify_output`, eliminating verification cost.
+- For microsecond-scale executions, `overhead_pct` is not a stable metric; absolute seconds should be used.
 
 See `docs/benchmark.md` for broader benchmark context.
 

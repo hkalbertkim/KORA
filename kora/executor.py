@@ -348,7 +348,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
             budget_breached=False,
             cause=exc if isinstance(exc, Exception) else None,
         )
-        return {
+        result = {
             "ok": False,
             "graph_id": graph.graph_id,
             "order": order,
@@ -502,7 +502,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         cause=runtime_error,
                     )
 
-                return {
+                result = {
                     "ok": False,
                     "graph_id": graph.graph_id,
                     "order": order,

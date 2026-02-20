@@ -75,10 +75,10 @@ def test_run_graph_det_with_schema_still_verifies() -> None:
     assert result["error"]["error_type"] == "OUTPUT_SCHEMA_INVALID"
 
 
-def test_adaptive_low_confidence_records_escalate_recommendation_without_escalation() -> None:
+def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -> None:
     from kora import executor as executor_module
 
-    class LowConfidenceAdapter(BaseAdapter):
+    class MockMiniAdapter(BaseAdapter):
         call_count = 0
 
         def run(
@@ -90,21 +90,69 @@ def test_adaptive_low_confidence_records_escalate_recommendation_without_escalat
             output_schema: dict[str, Any],
         ) -> dict[str, Any]:
             del input, budget, output_schema
-            LowConfidenceAdapter.call_count += 1
+            MockMiniAdapter.call_count += 1
             return {
                 "ok": True,
                 "output": {
                     "status": "ok",
                     "task_id": task_id,
-                    "answer": "low-confidence result",
+                    "answer": "mini result",
                 },
                 "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
-                "meta": {"adapter": "low_conf", "model": "mock-v0", "confidence": 0.1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    class MockGateAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockGateAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "gate result",
+                },
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gate", "model": "mock-gate", "confidence": 0.2},
+            }
+
+    class MockFullAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockFullAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "full result",
+                },
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_full", "model": "mock-full", "confidence": 0.95},
             }
 
     graph = TaskGraph.model_validate(
         {
-            "graph_id": "adaptive-low-confidence",
+            "graph_id": "adaptive-multi-stage",
             "version": "0.1",
             "root": "task_llm",
             "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
@@ -117,7 +165,7 @@ def test_adaptive_low_confidence_records_escalate_recommendation_without_escalat
                     "run": {
                         "kind": "llm",
                         "spec": {
-                            "adapter": "mock_low_conf",
+                            "adapter": "mock_mini",
                             "input": {"question": "q"},
                             "output_schema": {
                                 "type": "object",
@@ -137,7 +185,7 @@ def test_adaptive_low_confidence_records_escalate_recommendation_without_escalat
                         "adaptive": {
                             "min_confidence_to_stop": 0.85,
                             "max_escalations": 2,
-                            "escalation_order": ["mini", "gate", "full"],
+                            "escalation_order": ["mock_gate", "mock_full"],
                         },
                     },
                     "tags": [],
@@ -146,23 +194,44 @@ def test_adaptive_low_confidence_records_escalate_recommendation_without_escalat
         }
     )
 
-    old_adapter = executor_module._AdapterRegistry.providers.get("mock_low_conf")
-    executor_module._AdapterRegistry.providers["mock_low_conf"] = LowConfidenceAdapter
-    LowConfidenceAdapter.call_count = 0
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    old_gate = executor_module._AdapterRegistry.providers.get("mock_gate")
+    old_full = executor_module._AdapterRegistry.providers.get("mock_full")
+    executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
+    executor_module._AdapterRegistry.providers["mock_gate"] = MockGateAdapter
+    executor_module._AdapterRegistry.providers["mock_full"] = MockFullAdapter
+    MockMiniAdapter.call_count = 0
+    MockGateAdapter.call_count = 0
+    MockFullAdapter.call_count = 0
     try:
         normalized = normalize_graph(graph)
         validate_graph(normalized)
         result = run_graph(normalized)
     finally:
-        if old_adapter is None:
-            del executor_module._AdapterRegistry.providers["mock_low_conf"]
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
         else:
-            executor_module._AdapterRegistry.providers["mock_low_conf"] = old_adapter
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+        if old_gate is None:
+            del executor_module._AdapterRegistry.providers["mock_gate"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_gate"] = old_gate
+        if old_full is None:
+            del executor_module._AdapterRegistry.providers["mock_full"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_full"] = old_full
 
     assert result["ok"] is True
     llm_events = [event for event in result["events"] if event["task_id"] == "task_llm"]
-    assert len(llm_events) == 1
-    assert LowConfidenceAdapter.call_count == 1
-    meta = llm_events[0]["meta"]
-    assert meta["escalate_recommended"] is True
-    assert meta["stop_reason"] == "escalate_confidence"
+    assert len(llm_events) == 3
+    assert MockMiniAdapter.call_count + MockGateAdapter.call_count + MockFullAdapter.call_count == 3
+    assert MockMiniAdapter.call_count == 1
+    assert MockGateAdapter.call_count == 1
+    assert MockFullAdapter.call_count == 1
+    assert llm_events[0]["meta"]["adapter"] == "mock_mini"
+    assert llm_events[1]["meta"]["adapter"] == "mock_gate"
+    assert llm_events[2]["meta"]["adapter"] == "mock_full"
+    assert llm_events[0]["meta"]["model"] == "mock-mini"
+    assert llm_events[1]["meta"]["model"] == "mock-gate"
+    assert llm_events[2]["meta"]["model"] == "mock-full"
+    assert llm_events[-1]["meta"]["stop_reason"] == "confident_enough"

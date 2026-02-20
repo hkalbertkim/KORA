@@ -302,11 +302,17 @@ def _skip_if_matches(task: Task, outputs: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
-def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _run_llm_task(
+    task: Task,
+    outputs: dict[str, dict[str, Any]],
+    *,
+    adapter_override: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if task.run.kind != "llm":
         raise ValueError(f"task '{task.id}' is not an llm task")
 
-    adapter = _AdapterRegistry.get(task.run.spec.adapter)
+    adapter_name = adapter_override or task.run.spec.adapter
+    adapter = _AdapterRegistry.get(adapter_name)
     adapter_input = dict(task.run.spec.input)
     adapter_input.pop("skip_if", None)
 
@@ -468,28 +474,66 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         break
 
-                    llm_start = time.monotonic()
-                    output, adapter_result = _run_llm_task(task, outputs)
-                    llm_delta = time.monotonic() - llm_start
-                    stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
-                    _apply_adaptive_confidence_policy(task, adapter_result, state)
+                    adaptive = task.policy.adaptive
+                    escalation_order = list(adaptive.escalation_order) if adaptive is not None else []
+                    escalation_idx = 0
+                    current_adapter = task.run.spec.adapter
+                    llm_events_for_attempt: list[dict[str, Any]] = []
+
+                    while True:
+                        llm_start = time.monotonic()
+                        output, adapter_result = _run_llm_task(
+                            task,
+                            outputs,
+                            adapter_override=current_adapter,
+                        )
+                        llm_delta = time.monotonic() - llm_start
+                        stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
+                        _apply_adaptive_confidence_policy(task, adapter_result, state)
+
+                        llm_events_for_attempt.append(
+                            {
+                                "task_id": task.id,
+                                "attempt": attempt,
+                                "status": "ok",
+                                "stage": Stage.ADAPTER.value,
+                                "time_ms": int(llm_delta * 1000),
+                                "usage": adapter_result.get("usage", {}),
+                                "meta": adapter_result.get("meta", {}),
+                            }
+                        )
+
+                        meta = adapter_result.get("meta", {})
+                        should_escalate = bool(isinstance(meta, dict) and meta.get("escalate_recommended"))
+                        if not should_escalate:
+                            break
+
+                        if adaptive is None or escalation_idx >= adaptive.max_escalations:
+                            break
+
+                        if escalation_idx >= len(escalation_order):
+                            if isinstance(meta, dict):
+                                meta["stop_reason"] = "escalation_adapter_missing"
+                                meta["escalate_recommended"] = False
+                            break
+
+                        next_adapter = escalation_order[escalation_idx]
+                        escalation_idx += 1
+                        if next_adapter not in _AdapterRegistry.providers:
+                            if isinstance(meta, dict):
+                                meta["stop_reason"] = "escalation_adapter_missing"
+                                meta["escalate_recommended"] = False
+                            break
+
+                        current_adapter = next_adapter
+
                     stage = Stage.VERIFY
                     verify_start = time.monotonic()
                     verify_output(task, output)
                     verify_delta = time.monotonic() - verify_start
                     stage_timings["verify_total_s"] = stage_timings.get("verify_total_s", 0.0) + verify_delta
                     outputs[task.id] = output
-                    events.append(
-                        {
-                            "task_id": task.id,
-                            "attempt": attempt,
-                            "status": "ok",
-                            "stage": Stage.ADAPTER.value,
-                            "time_ms": int((time.monotonic() - start) * 1000),
-                            "usage": adapter_result.get("usage", {}),
-                            "meta": adapter_result.get("meta", {}),
-                        }
-                    )
+                    events.extend(llm_events_for_attempt)
                     break
 
                 raise KoraRuntimeError(

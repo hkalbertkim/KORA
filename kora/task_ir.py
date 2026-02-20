@@ -76,6 +76,15 @@ class Policy(BaseModel):
 
     budget: Budget | None = None
     on_fail: Literal["retry", "fail", "escalate"] = "fail"
+    adaptive: "AdaptiveRoutingPolicy | None" = None
+
+
+class AdaptiveRoutingPolicy(BaseModel):
+    """Adaptive routing configuration knobs (schema only, no runtime behavior)."""
+
+    min_confidence_to_stop: float = 0.85
+    max_escalations: int = 2
+    escalation_order: list[str] = Field(default_factory=lambda: ["mini", "gate", "full"])
 
 
 class Task(BaseModel):
@@ -173,6 +182,7 @@ def validate_graph(graph: TaskGraph) -> None:
 
 
 __all__ = [
+    "AdaptiveRoutingPolicy",
     "Budget",
     "Policy",
     "RunDetSpec",

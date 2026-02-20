@@ -17,6 +17,13 @@ from kora.task_ir import Task, TaskGraph
 from kora.verification import verify_output
 
 Handler = Callable[[Task, dict[str, Any]], dict[str, Any]]
+ADAPTIVE_META_KEYS: tuple[str, ...] = (
+    "confidence",
+    "uncertainty",
+    "voi",
+    "escalate_recommended",
+    "stop_reason",
+)
 
 
 class _AdapterRegistry:
@@ -310,6 +317,13 @@ def _run_llm_task(task: Task, outputs: dict[str, dict[str, Any]]) -> tuple[dict[
         budget=budget,
         output_schema=task.run.spec.output_schema,
     )
+    meta = result.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    normalized_meta = dict(meta)
+    for key in ADAPTIVE_META_KEYS:
+        normalized_meta.setdefault(key, None)
+    result["meta"] = normalized_meta
 
     if not result.get("ok"):
         raise ValueError(str(result.get("error", "adapter returned ok=false")))

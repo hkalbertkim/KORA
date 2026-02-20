@@ -99,6 +99,7 @@ def _run_kora_case(case_text: str, offline: bool) -> dict[str, Any]:
         "tokens_out": tokens_out,
         "final_output": result["final"],
         "events": result["events"],
+        "stage_timings": result.get("stage_timings", {}),
     }
 
 
@@ -115,6 +116,28 @@ def _build_case(case_text: str, offline: bool) -> dict[str, Any]:
             "tokens_in_reduced": direct["tokens_in"] - kora["tokens_in"],
             "tokens_out_reduced": direct["tokens_out"] - kora["tokens_out"],
         },
+    }
+
+
+def _stage_timing_breakdown(stage_timings: dict[str, Any] | None) -> dict[str, float] | None:
+    if not isinstance(stage_timings, dict):
+        return None
+    overall_total_s = float(stage_timings.get("overall_total_s", 0.0) or 0.0)
+    scheduler_total_s = float(stage_timings.get("scheduler_total_s", 0.0) or 0.0)
+    det_total_s = float(stage_timings.get("det_total_s", 0.0) or 0.0)
+    llm_total_s = float(stage_timings.get("llm_total_s", 0.0) or 0.0)
+    verify_total_s = float(stage_timings.get("verify_total_s", 0.0) or 0.0)
+    accounted_s = scheduler_total_s + det_total_s + llm_total_s + verify_total_s
+    overhead_s = overall_total_s - accounted_s
+    overhead_pct = (overhead_s / overall_total_s) if overall_total_s > 0.0 else 0.0
+    return {
+        "overall_total_s": overall_total_s,
+        "scheduler_total_s": scheduler_total_s,
+        "det_total_s": det_total_s,
+        "llm_total_s": llm_total_s,
+        "verify_total_s": verify_total_s,
+        "overhead_s": overhead_s,
+        "overhead_pct": overhead_pct,
     }
 
 
@@ -149,6 +172,19 @@ def main() -> None:
     offline = not bool(os.getenv("OPENAI_API_KEY"))
     payload = run_cases(offline=offline)
     print(json.dumps(payload, indent=2))
+    for case_name in ("short", "long"):
+        stage_timings = payload["cases"][case_name]["kora"].get("stage_timings")
+        breakdown = _stage_timing_breakdown(stage_timings)
+        if breakdown is None:
+            continue
+        print(f"\nStage Timing Breakdown ({case_name})")
+        print(f"- overall_total_s: {breakdown['overall_total_s']:.6f}")
+        print(f"- scheduler_total_s: {breakdown['scheduler_total_s']:.6f}")
+        print(f"- det_total_s: {breakdown['det_total_s']:.6f}")
+        print(f"- llm_total_s: {breakdown['llm_total_s']:.6f}")
+        print(f"- verify_total_s: {breakdown['verify_total_s']:.6f}")
+        print(f"- overhead_s: {breakdown['overhead_s']:.6f}")
+        print(f"- overhead_pct: {breakdown['overhead_pct']:.6f}")
 
 
 if __name__ == "__main__":

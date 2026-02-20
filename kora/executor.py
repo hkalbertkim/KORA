@@ -381,11 +381,13 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     output = _run_det_task(task, state)
                     det_delta = time.monotonic() - det_start
                     stage_timings["det_total_s"] = stage_timings.get("det_total_s", 0.0) + det_delta
-                    stage = Stage.VERIFY
-                    verify_start = time.monotonic()
-                    verify_output(task, output)
-                    verify_delta = time.monotonic() - verify_start
-                    stage_timings["verify_total_s"] = stage_timings.get("verify_total_s", 0.0) + verify_delta
+                    det_verify_schema = task.verify.schema if task.verify is not None else None
+                    if det_verify_schema:
+                        stage = Stage.VERIFY
+                        verify_start = time.monotonic()
+                        verify_output(task, output)
+                        verify_delta = time.monotonic() - verify_start
+                        stage_timings["verify_total_s"] = stage_timings.get("verify_total_s", 0.0) + verify_delta
                     outputs[task.id] = output
                     events.append(
                         {

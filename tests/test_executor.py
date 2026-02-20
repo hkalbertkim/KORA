@@ -337,3 +337,158 @@ def test_adaptive_low_confidence_voi_too_low_stops_without_escalation() -> None:
     assert meta["escalate_recommended"] is False
     assert meta["uncertainty"] == 0.9
     assert meta["voi"] == 0.09
+
+
+def test_adaptive_voi_uses_runtime_estimated_cost_when_policy_cost_missing() -> None:
+    from kora import executor as executor_module
+
+    class MockGateAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockGateAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "gate result",
+                },
+                "usage": {"tokens_in": 1000, "tokens_out": 1000},
+                "meta": {"adapter": "mock_mini:gate", "model": "mock-gate", "confidence": 0.99},
+            }
+
+    class MockMiniAdapter(BaseAdapter):
+        call_count = 0
+
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            MockMiniAdapter.call_count += 1
+            return {
+                "ok": True,
+                "output": {
+                    "status": "ok",
+                    "task_id": task_id,
+                    "answer": "mini result",
+                },
+                "usage": {"tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_mini", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-voi-runtime-estimate",
+            "version": "0.1",
+            "root": "task_target",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_warm_gate",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini:gate",
+                            "input": {"question": "warm"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {"on_fail": "fail"},
+                    "tags": [],
+                },
+                {
+                    "id": "task_target",
+                    "type": "llm.answer",
+                    "deps": ["task_warm_gate"],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_mini",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "min_voi_to_escalate": 0.2,
+                            "max_escalations": 1,
+                            "escalation_order": ["gate"],
+                            "stage_costs": {"mini": 1.0, "full": 10.0},
+                            "use_voi": True,
+                        },
+                    },
+                    "tags": [],
+                },
+            ],
+        }
+    )
+
+    old_mini = executor_module._AdapterRegistry.providers.get("mock_mini")
+    old_gate = executor_module._AdapterRegistry.providers.get("mock_mini:gate")
+    executor_module._AdapterRegistry.providers["mock_mini"] = MockMiniAdapter
+    executor_module._AdapterRegistry.providers["mock_mini:gate"] = MockGateAdapter
+    MockMiniAdapter.call_count = 0
+    MockGateAdapter.call_count = 0
+    try:
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+        result = run_graph(normalized)
+    finally:
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers["mock_mini"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini"] = old_mini
+        if old_gate is None:
+            del executor_module._AdapterRegistry.providers["mock_mini:gate"]
+        else:
+            executor_module._AdapterRegistry.providers["mock_mini:gate"] = old_gate
+
+    assert result["ok"] is True
+    assert MockGateAdapter.call_count == 1
+    assert MockMiniAdapter.call_count == 1
+    target_events = [event for event in result["events"] if event["task_id"] == "task_target"]
+    assert len(target_events) == 1
+    meta = target_events[0]["meta"]
+    assert meta["cost_units"] == 2.0
+    assert meta["stop_reason"] == "voi_too_low"
+    assert meta["estimated_next_cost"] > 100.0

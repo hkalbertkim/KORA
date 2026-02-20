@@ -351,10 +351,17 @@ def _resolve_escalation_adapter(base_adapter_name: str, stage_token: str) -> str
     return None
 
 
+def _stage_token_from_adapter_name(adapter_name: str) -> str:
+    if ":" in adapter_name:
+        return adapter_name.rsplit(":", maxsplit=1)[1]
+    return adapter_name
+
+
 def _apply_adaptive_confidence_policy(
     task: Task,
     adapter_result: dict[str, Any],
     next_stage_token: str | None,
+    stage_cost_estimates: dict[str, float],
 ) -> None:
     adaptive = task.policy.adaptive
     if adaptive is None:
@@ -373,9 +380,13 @@ def _apply_adaptive_confidence_policy(
     uncertainty = 1.0 - confidence
     stage_cost = 1.0
     if next_stage_token is not None:
-        cost_raw = adaptive.stage_costs.get(next_stage_token, 1.0)
+        if next_stage_token in adaptive.stage_costs:
+            cost_raw = adaptive.stage_costs.get(next_stage_token, 1.0)
+        else:
+            cost_raw = stage_cost_estimates.get(next_stage_token, 1.0)
         if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool) and cost_raw > 0:
             stage_cost = float(cost_raw)
+    meta["estimated_next_cost"] = stage_cost
     voi = uncertainty / stage_cost
     meta["uncertainty"] = uncertainty
     meta["voi"] = voi
@@ -403,6 +414,8 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
     state["outputs"] = outputs
     stage_timings: dict[str, float] = {}
     state["stage_timings"] = stage_timings
+    stage_cost_estimates: dict[str, float] = {}
+    state["stage_cost_estimates"] = stage_cost_estimates
     order: list[str] = []
 
     scheduler_start = time.monotonic()
@@ -515,7 +528,40 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         )
                         llm_delta = time.monotonic() - llm_start
                         stage_timings["llm_total_s"] = stage_timings.get("llm_total_s", 0.0) + llm_delta
-                        _apply_adaptive_confidence_policy(task, adapter_result, next_stage_token)
+                        usage = adapter_result.get("usage")
+                        cost_units: float | None = None
+                        if isinstance(usage, dict):
+                            tokens_in = usage.get("tokens_in")
+                            tokens_out = usage.get("tokens_out")
+                            if (
+                                isinstance(tokens_in, (int, float))
+                                and not isinstance(tokens_in, bool)
+                                and isinstance(tokens_out, (int, float))
+                                and not isinstance(tokens_out, bool)
+                            ):
+                                cost_units = float(tokens_in) + float(tokens_out)
+                            else:
+                                time_ms = usage.get("time_ms")
+                                if isinstance(time_ms, (int, float)) and not isinstance(time_ms, bool):
+                                    cost_units = float(time_ms)
+
+                        meta = adapter_result.get("meta")
+                        if not isinstance(meta, dict):
+                            meta = {}
+                            adapter_result["meta"] = meta
+                        meta["cost_units"] = cost_units
+
+                        if cost_units is not None:
+                            stage_token_key = _stage_token_from_adapter_name(current_adapter)
+                            old_est = stage_cost_estimates.get(stage_token_key, 1.0)
+                            stage_cost_estimates[stage_token_key] = 0.3 * cost_units + (1.0 - 0.3) * old_est
+
+                        _apply_adaptive_confidence_policy(
+                            task,
+                            adapter_result,
+                            next_stage_token,
+                            stage_cost_estimates,
+                        )
 
                         llm_events_for_attempt.append(
                             {

@@ -90,6 +90,11 @@ type RetrievalSummary = {
   terminal_full_rate: number;
 };
 
+type WarmDemoRuns = {
+  baseline_run_id: string;
+  warmed_run_id: string;
+};
+
 const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Output"];
 
 export default function App() {
@@ -102,6 +107,8 @@ export default function App() {
   const [runSkippedLLM, setRunSkippedLLM] = useState(false);
   const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
   const [recentStationEvents, setRecentStationEvents] = useState<RecentStationEvent[]>([]);
+  const [warmDemoRuns, setWarmDemoRuns] = useState<WarmDemoRuns | null>(null);
+  const [activeRunLabel, setActiveRunLabel] = useState<string>("none");
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchHistory = async () => {
@@ -185,18 +192,97 @@ export default function App() {
     };
   }, [recentStationEvents]);
 
-  const runMode = async (mode: RunMode) => {
+  const streamRun = async (runId: string, runLabel: string) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     setPlaying(true);
+    setActiveRunLabel(runLabel);
     setActiveIndex(0);
     setTrace([]);
     setRunSkippedLLM(false);
     setStationMetrics({});
     setRecentStationEvents([]);
     setReport({});
+    const es = new EventSource(`/api/sse_run?run_id=${encodeURIComponent(runId)}`);
+    eventSourceRef.current = es;
+    es.addEventListener("station", (ev) => {
+      try {
+        const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
+        if (parsed.stage.toUpperCase() === "ADAPTER" && parsed.skipped === true) {
+          setRunSkippedLLM(true);
+        }
+        const station = stageToStation(parsed.stage, parsed.skipped === true);
+        const meta = parsed.meta && typeof parsed.meta === "object" ? parsed.meta : undefined;
+        setTrace((prev) => [...prev, { station, t: prev.length }]);
+        setStationMetrics((prev) => ({
+          ...prev,
+          [station]: {
+            status: parsed.status,
+            time_ms: parsed.time_ms,
+            skipped: parsed.skipped,
+            tokens_in: parsed.tokens_in,
+            tokens_out: parsed.tokens_out
+          }
+        }));
+        setRecentStationEvents((prev) => {
+          const next = [
+            ...prev,
+            {
+              station,
+              stage: parsed.stage,
+              status: parsed.status,
+              time_ms: parsed.time_ms,
+              skipped: parsed.skipped,
+              tokens_in: parsed.tokens_in,
+              tokens_out: parsed.tokens_out,
+              meta
+            }
+          ];
+          return next.length > 200 ? next.slice(next.length - 200) : next;
+        });
+        const next = stationIndexMap[station];
+        if (typeof next === "number") {
+          setActiveIndex(next);
+        }
+      } catch {
+        // Ignore malformed payloads in demo mode.
+      }
+    });
+
+    es.addEventListener("summary", (ev) => {
+      try {
+        const parsed = JSON.parse((ev as MessageEvent<string>).data) as SummaryEvent;
+        setReport((prev) => ({
+          ...prev,
+          ok: parsed.ok,
+          total_time_ms: parsed.total_time_ms,
+          total_llm_calls: parsed.total_llm_calls,
+          tokens_in: parsed.tokens_in,
+          tokens_out: parsed.tokens_out,
+          estimated_cost_usd: parsed.estimated_cost_usd
+        }));
+      } catch {
+        // Ignore malformed summary payloads in demo mode.
+      }
+    });
+
+    es.addEventListener("done", () => {
+      es.close();
+      eventSourceRef.current = null;
+      setPlaying(false);
+      void fetchHistory();
+    });
+
+    es.onerror = () => {
+      es.close();
+      eventSourceRef.current = null;
+      setPlaying(false);
+    };
+  };
+
+  const runMode = async (mode: RunMode) => {
     try {
       const runRes = await fetch("/api/run", {
         method: "POST",
@@ -210,83 +296,30 @@ export default function App() {
       if (!runData.run_id) {
         throw new Error("missing run_id");
       }
+      setWarmDemoRuns(null);
+      await streamRun(runData.run_id, mode);
+    } catch {
+      setPlaying(false);
+    }
+  };
 
-      const es = new EventSource(`/api/sse_run?run_id=${encodeURIComponent(runData.run_id)}`);
-      eventSourceRef.current = es;
-
-      es.addEventListener("station", (ev) => {
-        try {
-          const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
-          if (parsed.stage.toUpperCase() === "ADAPTER" && parsed.skipped === true) {
-            setRunSkippedLLM(true);
-          }
-          const station = stageToStation(parsed.stage, parsed.skipped === true);
-          const meta = parsed.meta && typeof parsed.meta === "object" ? parsed.meta : undefined;
-          setTrace((prev) => [...prev, { station, t: prev.length }]);
-          setStationMetrics((prev) => ({
-            ...prev,
-            [station]: {
-              status: parsed.status,
-              time_ms: parsed.time_ms,
-              skipped: parsed.skipped,
-              tokens_in: parsed.tokens_in,
-              tokens_out: parsed.tokens_out
-            }
-          }));
-          setRecentStationEvents((prev) => {
-            const next = [
-              ...prev,
-              {
-                station,
-                stage: parsed.stage,
-                status: parsed.status,
-                time_ms: parsed.time_ms,
-                skipped: parsed.skipped,
-                tokens_in: parsed.tokens_in,
-                tokens_out: parsed.tokens_out,
-                meta
-              }
-            ];
-            return next.length > 200 ? next.slice(next.length - 200) : next;
-          });
-          const next = stationIndexMap[station];
-          if (typeof next === "number") {
-            setActiveIndex(next);
-          }
-        } catch {
-          // Ignore malformed payloads in demo mode.
-        }
-      });
-
-      es.addEventListener("summary", (ev) => {
-        try {
-          const parsed = JSON.parse((ev as MessageEvent<string>).data) as SummaryEvent;
-          setReport((prev) => ({
-            ...prev,
-            ok: parsed.ok,
-            total_time_ms: parsed.total_time_ms,
-            total_llm_calls: parsed.total_llm_calls,
-            tokens_in: parsed.tokens_in,
-            tokens_out: parsed.tokens_out,
-            estimated_cost_usd: parsed.estimated_cost_usd
-          }));
-        } catch {
-          // Ignore malformed summary payloads in demo mode.
-        }
-      });
-
-      es.addEventListener("done", () => {
-        es.close();
-        eventSourceRef.current = null;
-        setPlaying(false);
-        void fetchHistory();
-      });
-
-      es.onerror = () => {
-        es.close();
-        eventSourceRef.current = null;
-        setPlaying(false);
-      };
+  const runRetrievalWarmDemo = async () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setPlaying(true);
+    try {
+      const runRes = await fetch("/api/run_retrieval_warm_demo", { method: "POST" });
+      if (!runRes.ok) {
+        throw new Error("warm demo request failed");
+      }
+      const data = (await runRes.json()) as WarmDemoRuns;
+      if (!data.baseline_run_id || !data.warmed_run_id) {
+        throw new Error("warm demo run ids missing");
+      }
+      setWarmDemoRuns(data);
+      await streamRun(data.baseline_run_id, "baseline");
     } catch {
       setPlaying(false);
     }
@@ -324,7 +357,20 @@ export default function App() {
           <button onClick={() => void runMode("kora")} disabled={playing}>
             {playing ? "Running..." : "Run KORA"}
           </button>
+          <button onClick={() => void runRetrievalWarmDemo()} disabled={playing}>
+            {playing ? "Running..." : "Run Retrieval Warm Demo"}
+          </button>
         </div>
+        {warmDemoRuns && (
+          <div className="button-row">
+            <button onClick={() => void streamRun(warmDemoRuns.baseline_run_id, "baseline")} disabled={playing}>
+              View Baseline
+            </button>
+            <button onClick={() => void streamRun(warmDemoRuns.warmed_run_id, "warmed")} disabled={playing}>
+              View Warmed
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="viewer card">
@@ -340,6 +386,7 @@ export default function App() {
       </section>
 
       <section className="card">
+        <div className="trace-note">Active run: {activeRunLabel}</div>
         <MetricsPanel report={report} retrievalSummary={retrievalSummary} recentStationEvents={recentStationEvents} />
       </section>
 

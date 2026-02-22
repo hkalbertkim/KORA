@@ -17,7 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
+from kora import executor as executor_module
+from kora.adapters.base import BaseAdapter
 from kora.executor import run_graph
+from kora.retrieval import build_retrieval_key
 from kora.task_ir import TaskGraph, normalize_graph, validate_graph
 from kora.telemetry import summarize_run
 
@@ -31,6 +34,17 @@ EVENT_META_WHITELIST = (
     "adapter",
     "model",
 )
+WARM_DEMO_ADAPTER = "studio_warm_demo"
+WARM_DEMO_TASK_ID = "task_llm"
+WARM_DEMO_TASK_TYPE = "llm.answer"
+WARM_DEMO_PROMPT = "User asks for a concise summary of cost variance risks in an AI support assistant rollout."
+WARM_DEMO_INPUT = {"question": WARM_DEMO_PROMPT}
+WARM_DEMO_TAGS = ["studio", "retrieval-warm-demo"]
+WARM_DEMO_OUTPUT = {
+    "status": "ok",
+    "task_id": WARM_DEMO_TASK_ID,
+    "answer": "full answer: cost variance risks are demand volatility, policy drift, and handoff churn",
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +91,112 @@ class RunRequest(BaseModel):
     prompt: str
     mode: str = "kora"
     adapter: str = "mock"
+
+
+class _WarmDemoMiniAdapter(BaseAdapter):
+    def run(
+        self,
+        *,
+        task_id: str,
+        input: dict[str, Any],
+        budget: dict[str, Any],
+        output_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        del input, budget, output_schema
+        return {
+            "ok": True,
+            "output": {"status": "ok", "task_id": task_id, "answer": "mini draft"},
+            "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+            "meta": {"adapter": WARM_DEMO_ADAPTER, "model": "mock-mini", "confidence": 0.1},
+        }
+
+
+class _WarmDemoGateAdapter(BaseAdapter):
+    def run(
+        self,
+        *,
+        task_id: str,
+        input: dict[str, Any],
+        budget: dict[str, Any],
+        output_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        del input, budget, output_schema
+        return {
+            "ok": True,
+            "output": {"status": "ok", "task_id": task_id, "answer": "N/A"},
+            "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+            "meta": {"adapter": f"{WARM_DEMO_ADAPTER}:gate", "model": "mock-gate", "confidence": 0.2},
+        }
+
+
+class _WarmDemoFullAdapter(BaseAdapter):
+    def run(
+        self,
+        *,
+        task_id: str,
+        input: dict[str, Any],
+        budget: dict[str, Any],
+        output_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        del input, budget, output_schema
+        return {
+            "ok": True,
+            "output": WARM_DEMO_OUTPUT,
+            "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+            "meta": {"adapter": f"{WARM_DEMO_ADAPTER}:full", "model": "mock-full", "confidence": 0.95},
+        }
+
+
+def _normalize_events(raw_events: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if not isinstance(raw_events, list):
+        return events
+    for event in raw_events:
+        if not isinstance(event, dict):
+            continue
+        normalized: dict[str, Any] = {
+            "stage": event.get("stage"),
+            "status": event.get("status"),
+            "time_ms": event.get("time_ms"),
+        }
+        skipped = None
+        if "skipped" in event:
+            skipped = bool(event.get("skipped"))
+        elif (
+            str(event.get("stage", "")).upper() == "ADAPTER"
+            and str(event.get("status", "")).lower() == "ok"
+            and isinstance(event.get("message"), str)
+            and "skip" in str(event.get("message", "")).lower()
+        ):
+            skipped = True
+        if skipped is not None:
+            normalized["skipped"] = skipped
+        usage = event.get("usage")
+        if isinstance(usage, dict):
+            normalized["usage"] = usage
+        error = event.get("error")
+        if isinstance(error, dict):
+            normalized["error"] = error
+        meta_in = event.get("meta")
+        if isinstance(meta_in, dict):
+            meta_out = {k: meta_in.get(k) for k in EVENT_META_WHITELIST if k in meta_in}
+            normalized["meta"] = meta_out
+        events.append(normalized)
+    return events
+
+
+def _store_run(*, prompt: str, mode: str, result: dict[str, Any]) -> str:
+    run_id = uuid4().hex
+    summary = summarize_run(result)
+    RUNS[run_id] = {
+        "events": _normalize_events(result.get("events", [])),
+        "summary": summary,
+        "prompt": prompt,
+        "mode": mode,
+        "ok": bool(result.get("ok", True)),
+        "done": True,
+    }
+    return run_id
 
 
 def _build_graph(prompt: str, adapter: str, mode: str) -> TaskGraph:
@@ -180,6 +300,59 @@ def _build_graph(prompt: str, adapter: str, mode: str) -> TaskGraph:
     return normalized
 
 
+def _build_retrieval_warm_demo_graph(enable_gate_retrieval: bool) -> TaskGraph:
+    payload = {
+        "graph_id": f"studio-warm-demo-{uuid4().hex[:8]}",
+        "version": "0.1",
+        "root": WARM_DEMO_TASK_ID,
+        "defaults": {"budget": {"max_time_ms": 20000, "max_tokens": 400, "max_retries": 1}},
+        "tasks": [
+            {
+                "id": WARM_DEMO_TASK_ID,
+                "type": WARM_DEMO_TASK_TYPE,
+                "deps": [],
+                "in": {},
+                "run": {
+                    "kind": "llm",
+                    "spec": {
+                        "adapter": WARM_DEMO_ADAPTER,
+                        "input": WARM_DEMO_INPUT,
+                        "output_schema": {
+                            "type": "object",
+                            "properties": {
+                                "status": {"type": "string"},
+                                "task_id": {"type": "string"},
+                                "answer": {"type": "string"},
+                            },
+                            "required": ["status", "task_id", "answer"],
+                        },
+                    },
+                },
+                "verify": {
+                    "schema": {"type": "object", "required": ["status", "task_id", "answer"]},
+                    "rules": [],
+                },
+                "policy": {
+                    "on_fail": "fail",
+                    "adaptive": {
+                        "routing_profile": "balanced",
+                        "min_confidence_to_stop": 0.85,
+                        "max_escalations": 2,
+                        "escalation_order": ["gate", "full"],
+                        "use_voi": False,
+                        "enable_gate_retrieval": enable_gate_retrieval,
+                    },
+                },
+                "tags": WARM_DEMO_TAGS,
+            }
+        ],
+    }
+    graph = TaskGraph.model_validate(payload)
+    normalized = normalize_graph(graph)
+    validate_graph(normalized)
+    return normalized
+
+
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
@@ -208,51 +381,45 @@ def run_demo(payload: RunRequest) -> dict[str, str]:
     mode = payload.mode if payload.mode in {"kora", "direct"} else "kora"
     graph = _build_graph(payload.prompt, adapter=adapter, mode=mode)
     result = run_graph(graph)
-    run_id = uuid4().hex
-    raw_events = result.get("events", [])
-    events: list[dict[str, Any]] = []
-    if isinstance(raw_events, list):
-        for event in raw_events:
-            if not isinstance(event, dict):
-                continue
-            normalized: dict[str, Any] = {
-                "stage": event.get("stage"),
-                "status": event.get("status"),
-                "time_ms": event.get("time_ms"),
-            }
-            skipped = None
-            if "skipped" in event:
-                skipped = bool(event.get("skipped"))
-            elif (
-                str(event.get("stage", "")).upper() == "ADAPTER"
-                and str(event.get("status", "")).lower() == "ok"
-                and isinstance(event.get("message"), str)
-                and "skip" in str(event.get("message", "")).lower()
-            ):
-                skipped = True
-            if skipped is not None:
-                normalized["skipped"] = skipped
-            usage = event.get("usage")
-            if isinstance(usage, dict):
-                normalized["usage"] = usage
-            error = event.get("error")
-            if isinstance(error, dict):
-                normalized["error"] = error
-            meta_in = event.get("meta")
-            if isinstance(meta_in, dict):
-                meta_out = {k: meta_in.get(k) for k in EVENT_META_WHITELIST if k in meta_in}
-                normalized["meta"] = meta_out
-            events.append(normalized)
-    summary = summarize_run(result)
-    RUNS[run_id] = {
-        "events": events,
-        "summary": summary,
-        "prompt": payload.prompt,
-        "mode": mode,
-        "ok": bool(result.get("ok", True)),
-        "done": True,
-    }
+    run_id = _store_run(prompt=payload.prompt, mode=mode, result=result)
     return {"run_id": run_id}
+
+
+@app.post("/api/run_retrieval_warm_demo")
+def run_retrieval_warm_demo() -> dict[str, str]:
+    old_mini = executor_module._AdapterRegistry.providers.get(WARM_DEMO_ADAPTER)
+    old_gate = executor_module._AdapterRegistry.providers.get(f"{WARM_DEMO_ADAPTER}:gate")
+    old_full = executor_module._AdapterRegistry.providers.get(f"{WARM_DEMO_ADAPTER}:full")
+    executor_module._AdapterRegistry.providers[WARM_DEMO_ADAPTER] = _WarmDemoMiniAdapter
+    executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:gate"] = _WarmDemoGateAdapter
+    executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:full"] = _WarmDemoFullAdapter
+
+    retrieval_key = build_retrieval_key(WARM_DEMO_TASK_TYPE, WARM_DEMO_INPUT, WARM_DEMO_TAGS)
+    try:
+        executor_module.GATE_RETRIEVAL_STORE.clear()
+        baseline_result = run_graph(_build_retrieval_warm_demo_graph(enable_gate_retrieval=False))
+        baseline_run_id = _store_run(prompt=WARM_DEMO_PROMPT, mode="kora", result=baseline_result)
+
+        executor_module.GATE_RETRIEVAL_STORE.clear()
+        executor_module.GATE_RETRIEVAL_STORE.put(retrieval_key, WARM_DEMO_OUTPUT)
+        warmed_result = run_graph(_build_retrieval_warm_demo_graph(enable_gate_retrieval=True))
+        warmed_run_id = _store_run(prompt=WARM_DEMO_PROMPT, mode="kora", result=warmed_result)
+    finally:
+        executor_module.GATE_RETRIEVAL_STORE.clear()
+        if old_mini is None:
+            del executor_module._AdapterRegistry.providers[WARM_DEMO_ADAPTER]
+        else:
+            executor_module._AdapterRegistry.providers[WARM_DEMO_ADAPTER] = old_mini
+        if old_gate is None:
+            del executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:gate"]
+        else:
+            executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:gate"] = old_gate
+        if old_full is None:
+            del executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:full"]
+        else:
+            executor_module._AdapterRegistry.providers[f"{WARM_DEMO_ADAPTER}:full"] = old_full
+
+    return {"baseline_run_id": baseline_run_id, "warmed_run_id": warmed_run_id}
 
 
 @app.get("/api/run_history")

@@ -1,0 +1,74 @@
+[
+  {
+    "metrics": {
+      "coverage_ok_rate": 0.6196666666666667,
+      "full_called_rate": 0.7096666666666667,
+      "mean_cost": 1890.7089863333333,
+      "p50_latency": 821.088,
+      "p95_latency": 1530.14735,
+      "p99_latency": 1616.35353,
+      "pct_full": 0.7096666666666667,
+      "pct_gate": 0.6043333333333333,
+      "quality_ok_rate": 0.8033333333333333,
+      "verify_ok_rate": 0.7493333333333333
+    },
+    "params": {
+      "allow_self_consistency": false,
+      "budget_scale": 1.0106,
+      "gate_full_threshold": 0.8941,
+      "mini_full_threshold": 0.8811,
+      "voi_threshold": 0.2308
+    },
+    "profile": "balanced",
+    "score": 0.111903,
+    "trial_id": "t28"
+  },
+  {
+    "metrics": {
+      "coverage_ok_rate": 0.6076666666666667,
+      "full_called_rate": 0.6436666666666667,
+      "mean_cost": 2099.255182,
+      "p50_latency": 1314.5635,
+      "p95_latency": 1751.96725,
+      "p99_latency": 1815.0642,
+      "pct_full": 0.6436666666666667,
+      "pct_gate": 0.789,
+      "quality_ok_rate": 0.7996666666666666,
+      "verify_ok_rate": 0.7593333333333333
+    },
+    "params": {
+      "allow_self_consistency": true,
+      "budget_scale": 1.3384,
+      "gate_full_threshold": 0.8184,
+      "mini_full_threshold": 0.7851,
+      "voi_threshold": 0.1022
+    },
+    "profile": "balanced",
+    "score": 0.094149,
+    "trial_id": "t14"
+  },
+  {
+    "metrics": {
+      "coverage_ok_rate": 0.598,
+      "full_called_rate": 0.668,
+      "mean_cost": 2083.182913666667,
+      "p50_latency": 1185.202,
+      "p95_latency": 1751.96725,
+      "p99_latency": 1815.0642,
+      "pct_full": 0.668,
+      "pct_gate": 0.6166666666666667,
+      "quality_ok_rate": 0.7923333333333333,
+      "verify_ok_rate": 0.7546666666666667
+    },
+    "params": {
+      "allow_self_consistency": false,
+      "budget_scale": 1.3019,
+      "gate_full_threshold": 0.84,
+      "mini_full_threshold": 0.7254,
+      "voi_threshold": 0.2193
+    },
+    "profile": "balanced",
+    "score": 0.082058,
+    "trial_id": "t21"
+  }
+]

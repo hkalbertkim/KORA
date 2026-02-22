@@ -12,9 +12,23 @@ type Props = {
       tokens_out?: number;
     }
   >;
+  stationMetaSummary?: Record<
+    string,
+    {
+      stop_reason?: string;
+      retrieval_hit?: boolean;
+      verifier_ok?: boolean;
+    }
+  >;
 };
 
-export default function MetroMap({ stations, activeIndex, runSkippedLLM, stationMetrics }: Props) {
+export default function MetroMap({
+  stations,
+  activeIndex,
+  runSkippedLLM,
+  stationMetrics,
+  stationMetaSummary = {}
+}: Props) {
   const startX = 40;
   const stepX = 120;
   const y = 70;
@@ -75,7 +89,19 @@ export default function MetroMap({ stations, activeIndex, runSkippedLLM, station
         const x = startX + idx * stepX;
         const active = idx <= activeIndex;
         const metric = stationMetrics[name];
+        const meta = stationMetaSummary[name];
         const dimmedAdapter = runSkippedLLM && idx === adapterIndex;
+        const badges: string[] = [];
+        if (meta?.retrieval_hit) {
+          badges.push("R-HIT");
+        } else if ((meta?.stop_reason ?? "").includes("accepted_gate_verified")) {
+          badges.push("G-OK");
+        } else if (meta?.stop_reason) {
+          badges.push(`SR:${shortStopReason(meta.stop_reason)}`);
+        }
+        if (meta?.verifier_ok) {
+          badges.push("V");
+        }
         return (
           <g key={name}>
             <circle
@@ -100,10 +126,26 @@ export default function MetroMap({ stations, activeIndex, runSkippedLLM, station
                 )}
               </g>
             )}
+            {badges.length > 0 && (
+              <g className="station-metric">
+                <rect x={x - 45} y={42} width={90} height={14} rx={6} className="metric-badge" />
+                <text x={x} y={52} textAnchor="middle" className="metric-text small">
+                  {badges.join(" ")}
+                </text>
+              </g>
+            )}
           </g>
         );
       })}
       <circle cx={dotX} cy={dotY} r={6} className="train-dot" />
     </svg>
   );
+}
+
+function shortStopReason(reason: string): string {
+  const normalized = reason.trim();
+  if (normalized.length <= 14) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 14)}...`;
 }

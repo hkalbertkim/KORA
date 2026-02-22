@@ -62,6 +62,12 @@ type StationMetric = {
   tokens_out?: number;
 };
 
+type StationMetaSummary = {
+  stop_reason?: string;
+  retrieval_hit?: boolean;
+  verifier_ok?: boolean;
+};
+
 type RecentStationEvent = {
   station: string;
   stage: string;
@@ -178,6 +184,10 @@ export default function App() {
 
   const retrievalSummary = useMemo<RetrievalSummary>(
     () => computeRetrievalSummary(recentStationEvents),
+    [recentStationEvents]
+  );
+  const stationMetaSummary = useMemo<Record<string, StationMetaSummary>>(
+    () => buildStationMetaSummary(recentStationEvents),
     [recentStationEvents]
   );
   const baselineRetrievalSummary = useMemo<RetrievalSummary>(
@@ -487,6 +497,7 @@ export default function App() {
           stations={STATIONS}
           activeIndex={activeIndex}
           stationMetrics={stationMetrics}
+          stationMetaSummary={stationMetaSummary}
           runSkippedLLM={runSkippedLLM}
         />
         <div className="trace-note">
@@ -644,6 +655,24 @@ function computeRetrievalSummary(events: RecentStationEvent[]): RetrievalSummary
     terminal_full: terminalFull,
     terminal_full_rate: terminalFull ? 1 : 0
   };
+}
+
+function buildStationMetaSummary(events: RecentStationEvent[]): Record<string, StationMetaSummary> {
+  const out: Record<string, StationMetaSummary> = {};
+  for (const event of events) {
+    const station = event.station;
+    if (!station) {
+      continue;
+    }
+    const prev = out[station] ?? {};
+    const reason = event.meta?.stop_reason;
+    out[station] = {
+      stop_reason: typeof reason === "string" ? reason : prev.stop_reason,
+      retrieval_hit: prev.retrieval_hit === true || event.meta?.gate_retrieval_hit === true,
+      verifier_ok: prev.verifier_ok === true || event.meta?.gate_verifier_ok === true
+    };
+  }
+  return out;
 }
 
 function formatRateWithCount(rate: number, hits: number, attempts: number): string {

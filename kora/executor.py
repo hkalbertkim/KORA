@@ -28,6 +28,7 @@ ADAPTIVE_META_KEYS: tuple[str, ...] = (
     "gate_verifier_ok",
     "gate_retrieval_hit",
     "gate_retrieval_key",
+    "gate_retrieval_strategy",
 )
 GATE_RETRIEVAL_STORE = InMemoryRetrievalStore()
 
@@ -773,7 +774,11 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                                     meta["stop_reason"] = "gate_verifier_failed_no_next_stage"
                                 elif adaptive is not None and adaptive.enable_gate_retrieval:
                                     retrieval_key = _task_retrieval_key(task)
+                                    GATE_RETRIEVAL_STORE.configure(
+                                        max_entries=adaptive.retrieval_max_entries
+                                    )
                                     meta["gate_retrieval_key"] = retrieval_key[:12]
+                                    meta["gate_retrieval_strategy"] = adaptive.retrieval_strategy
                                     retrieved_output = GATE_RETRIEVAL_STORE.get(retrieval_key)
                                     if isinstance(retrieved_output, (dict, str)) and _gate_output_verifier_ok(
                                         task, retrieved_output
@@ -789,6 +794,20 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                                 else:
                                     meta["escalate_recommended"] = True
                                     meta["stop_reason"] = "escalate_gate_verifier_failed"
+
+                        if (
+                            adaptive is not None
+                            and adaptive.enable_gate_retrieval
+                            and current_stage_token == "full"
+                            and _gate_output_verifier_ok(task, output)
+                        ):
+                            retrieval_key = _task_retrieval_key(task)
+                            GATE_RETRIEVAL_STORE.configure(max_entries=adaptive.retrieval_max_entries)
+                            GATE_RETRIEVAL_STORE.put(
+                                retrieval_key,
+                                output,
+                                ttl_seconds=adaptive.retrieval_ttl_seconds,
+                            )
 
                         llm_events_for_attempt.append(
                             {

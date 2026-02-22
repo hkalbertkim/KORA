@@ -97,6 +97,9 @@ class AdaptiveRoutingPolicy(BaseModel):
     self_consistency_min_next_cost: float = 200.0
     self_consistency_min_remaining_budget: float = 500.0
     enable_gate_retrieval: bool = False
+    retrieval_strategy: Literal["exact"] = "exact"
+    retrieval_ttl_seconds: int = 3600
+    retrieval_max_entries: int = 1000
 
     def resolved(self) -> "AdaptiveRoutingPolicy":
         profile_defaults: dict[str, dict[str, Any]] = {

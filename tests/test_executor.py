@@ -666,6 +666,7 @@ def test_gate_retrieval_avoids_full_escalation() -> None:
         assert hit_events[-1]["meta"]["adapter"] == "mock_gate_retr:gate"
         assert hit_events[-1]["meta"]["stop_reason"] == "accepted_gate_retrieval"
         assert hit_events[-1]["meta"]["gate_retrieval_hit"] is True
+        assert hit_events[-1]["meta"]["gate_retrieval_strategy"] == "exact"
 
         # Miss case: input differs, retrieval key misses, so it escalates to full.
         miss_result = _run_graph_with_question("gate-retrieval-miss-q")
@@ -674,6 +675,7 @@ def test_gate_retrieval_avoids_full_escalation() -> None:
         assert miss_events[1]["meta"]["adapter"] == "mock_gate_retr:gate"
         assert miss_events[1]["meta"]["stop_reason"] == "escalate_gate_retrieval_miss_or_invalid"
         assert miss_events[1]["meta"]["gate_retrieval_hit"] is False
+        assert miss_events[1]["meta"]["gate_retrieval_strategy"] == "exact"
     finally:
         executor_module.GATE_RETRIEVAL_STORE.clear()
 

@@ -103,19 +103,8 @@ def _mode_rng(seed: int, request_id: int, mode: str, profile: str | None) -> ran
     return random.Random(seed * 100_003 + request_id * 97 + mode_bias + profile_bias)
 
 
-def _simulate_kora_adaptive(
-    req: RequestParams,
-    profile: str,
-    stages_called: list[str],
-) -> tuple[float, float]:
-    total_cost_units = 0.0
-    total_latency_ms = 0.0
-    stages_called.append("mini")
-    total_cost_units += req.mini_cost_units
-    total_latency_ms += req.mini_latency_ms
-    mini_conf = req.mini_conf
-
-    profile_params = {
+def default_profile_params(profile: str) -> dict[str, float | bool]:
+    return {
         "balanced": {
             "voi_threshold": 0.12,
             "mini_full_threshold": 0.80,
@@ -145,6 +134,50 @@ def _simulate_kora_adaptive(
             "allow_self_consistency": False,
         },
     }[profile]
+
+
+def generate_sweep_trials(
+    profiles: list[str],
+    seed: int,
+    sweep_trials: int,
+) -> dict[str, list[dict[str, object]]]:
+    trial_map: dict[str, list[dict[str, object]]] = {}
+    for profile in profiles:
+        rng = random.Random(seed * 7919 + _stable_profile_bias(profile) * 37 + 11)
+        profile_trials: list[dict[str, object]] = []
+        for trial_idx in range(1, sweep_trials + 1):
+            trial_id = f"t{trial_idx:02d}"
+            params = {
+                "voi_threshold": round(rng.uniform(0.08, 0.28), 4),
+                "mini_full_threshold": round(rng.uniform(0.65, 0.90), 4),
+                "gate_full_threshold": round(rng.uniform(0.80, 0.98), 4),
+                "budget_scale": round(rng.uniform(1.00, 1.60), 4),
+                "allow_self_consistency": rng.random() < 0.5,
+            }
+            profile_trials.append(
+                {
+                    "trial_id": trial_id,
+                    "params": params,
+                }
+            )
+        trial_map[profile] = profile_trials
+    return trial_map
+
+
+def _simulate_kora_adaptive(
+    req: RequestParams,
+    profile: str,
+    stages_called: list[str],
+    policy_params: dict[str, float | bool],
+) -> tuple[float, float]:
+    total_cost_units = 0.0
+    total_latency_ms = 0.0
+    stages_called.append("mini")
+    total_cost_units += req.mini_cost_units
+    total_latency_ms += req.mini_latency_ms
+    mini_conf = req.mini_conf
+
+    profile_params = policy_params
 
     next_stage_cost_high = req.full_cost_units > 2200
     if (
@@ -195,6 +228,8 @@ def simulate_mode(
     mode: str,
     seed: int,
     profile: str | None = None,
+    trial_id: str | None = None,
+    policy_params: dict[str, float | bool] | None = None,
 ) -> dict[str, object]:
     rng = _mode_rng(seed, req.request_id, mode, profile)
     stages_called: list[str] = []
@@ -216,10 +251,13 @@ def simulate_mode(
     elif mode == "kora_adaptive":
         if not profile:
             raise ValueError("kora_adaptive requires a profile")
+        if not policy_params:
+            raise ValueError("kora_adaptive requires policy_params")
         total_cost_units, total_latency_ms = _simulate_kora_adaptive(
             req=req,
             profile=profile,
             stages_called=stages_called,
+            policy_params=policy_params,
         )
     else:
         raise ValueError(f"Unsupported mode: {mode}")
@@ -243,12 +281,18 @@ def simulate_mode(
     quality_ok = rng.random() < quality_prob
     coverage_ok = verify_ok and quality_ok
 
-    mode_name = mode if mode != "kora_adaptive" else f"kora_adaptive:{profile}"
+    mode_name = mode
+    if mode == "kora_adaptive":
+        mode_name = f"kora_adaptive:{profile}"
+        if trial_id:
+            mode_name = f"{mode_name}#{trial_id}"
 
     return {
         "request_id": req.request_id,
         "mode": mode_name,
         "profile": profile,
+        "trial_id": trial_id,
+        "params": policy_params if mode == "kora_adaptive" else None,
         "full_called": full_called,
         "stages_called": stages_called,
         "total_cost_units": round(total_cost_units, 3),
@@ -282,6 +326,17 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated KORA routing profiles.",
     )
     parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Enable policy sweep for kora_adaptive profile trials.",
+    )
+    parser.add_argument(
+        "--sweep-trials",
+        type=int,
+        default=30,
+        help="Trials per profile when --sweep is enabled.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -294,6 +349,8 @@ def main() -> None:
     args = parse_args()
     if args.n <= 0:
         raise ValueError("--n must be > 0")
+    if args.sweep_trials <= 0:
+        raise ValueError("--sweep-trials must be > 0")
     profiles = parse_profiles(args.profiles)
 
     datestamp = datetime.now().strftime("%Y%m%d")
@@ -301,20 +358,46 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     workload = generate_request_params(n=args.n, seed=args.seed)
+    sweep_trials_by_profile = (
+        generate_sweep_trials(profiles=profiles, seed=args.seed, sweep_trials=args.sweep_trials)
+        if args.sweep
+        else {}
+    )
 
     with output_path.open("w", encoding="utf-8") as f:
         for req in workload:
             for mode in BASELINE_MODES:
-                result = simulate_mode(req=req, mode=mode, seed=args.seed, profile=None)
-                f.write(json.dumps(result, sort_keys=True) + "\n")
-            for profile in profiles:
                 result = simulate_mode(
                     req=req,
-                    mode="kora_adaptive",
-                    profile=profile,
+                    mode=mode,
                     seed=args.seed,
+                    profile=None,
+                    trial_id=None,
+                    policy_params=None,
                 )
                 f.write(json.dumps(result, sort_keys=True) + "\n")
+            for profile in profiles:
+                if args.sweep:
+                    for trial in sweep_trials_by_profile[profile]:
+                        result = simulate_mode(
+                            req=req,
+                            mode="kora_adaptive",
+                            profile=profile,
+                            trial_id=str(trial["trial_id"]),
+                            policy_params=dict(trial["params"]),
+                            seed=args.seed,
+                        )
+                        f.write(json.dumps(result, sort_keys=True) + "\n")
+                else:
+                    result = simulate_mode(
+                        req=req,
+                        mode="kora_adaptive",
+                        profile=profile,
+                        trial_id=None,
+                        policy_params=default_profile_params(profile),
+                        seed=args.seed,
+                    )
+                    f.write(json.dumps(result, sort_keys=True) + "\n")
 
     print(str(output_path))
 

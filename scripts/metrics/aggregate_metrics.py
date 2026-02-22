@@ -44,13 +44,30 @@ def is_kora_mode(mode: str) -> bool:
     return mode.startswith("kora_adaptive:")
 
 
+def parse_kora_mode(mode: str) -> tuple[str, str | None]:
+    suffix = mode.split(":", 1)[1] if ":" in mode else ""
+    if "#" in suffix:
+        profile, trial_id = suffix.split("#", 1)
+        return profile, trial_id
+    return suffix, None
+
+
 def get_profile_from_row(row: dict[str, object]) -> str:
     profile = row.get("profile")
     if isinstance(profile, str) and profile:
         return profile
     mode = str(row.get("mode", ""))
-    _, _, suffix = mode.partition(":")
-    return suffix if suffix else "unknown"
+    parsed_profile, _ = parse_kora_mode(mode)
+    return parsed_profile if parsed_profile else "unknown"
+
+
+def get_trial_from_row(row: dict[str, object]) -> str | None:
+    trial_id = row.get("trial_id")
+    if isinstance(trial_id, str) and trial_id:
+        return trial_id
+    mode = str(row.get("mode", ""))
+    _, parsed_trial = parse_kora_mode(mode)
+    return parsed_trial
 
 
 def compute_stats(rows: list[dict[str, object]]) -> dict[str, float]:
@@ -184,6 +201,104 @@ def print_stage_mix_table(stats: dict[str, dict[str, float]], mode_order: list[s
     print("")
 
 
+def lower_is_better_improvement(baseline: float, profile_value: float) -> float:
+    return safe_div(baseline - profile_value, baseline)
+
+
+def higher_is_better_improvement(baseline: float, profile_value: float) -> float:
+    return safe_div(profile_value - baseline, baseline)
+
+
+def print_sweep_top5(
+    rows_by_mode: dict[str, list[dict[str, object]]],
+    stats: dict[str, dict[str, float]],
+) -> None:
+    baseline_full = stats["baseline_full"]
+    baseline_staged = stats["baseline_staged"]
+    coverage_floor = baseline_staged["coverage_ok_rate"] - 0.02
+
+    trial_records: list[dict[str, object]] = []
+    for mode, rows in rows_by_mode.items():
+        if not is_kora_mode(mode):
+            continue
+        profile = get_profile_from_row(rows[0]) if rows else "unknown"
+        trial_id = get_trial_from_row(rows[0]) if rows else None
+        if not trial_id:
+            continue
+        s = stats[mode]
+        if s["coverage_ok_rate"] < coverage_floor:
+            continue
+
+        full_called_reduction_vs_staged = lower_is_better_improvement(
+            baseline_staged["full_called_rate"], s["full_called_rate"]
+        )
+        cost_improvement_vs_staged = lower_is_better_improvement(
+            baseline_staged["mean_cost"], s["mean_cost"]
+        )
+        p95_improvement_vs_staged = lower_is_better_improvement(
+            baseline_staged["p95_latency"], s["p95_latency"]
+        )
+        score = (
+            0.45 * full_called_reduction_vs_staged
+            + 0.35 * cost_improvement_vs_staged
+            + 0.20 * p95_improvement_vs_staged
+        )
+
+        params = rows[0].get("params")
+        trial_records.append(
+            {
+                "profile": profile,
+                "trial_id": trial_id,
+                "full_called_rate": s["full_called_rate"],
+                "pct_gate": s["pct_gate"],
+                "pct_full": s["pct_full"],
+                "mean_cost": s["mean_cost"],
+                "p95_latency": s["p95_latency"],
+                "coverage_ok_rate": s["coverage_ok_rate"],
+                "score": score,
+                "params": params if isinstance(params, dict) else {},
+            }
+        )
+
+    trial_records.sort(
+        key=lambda r: (float(r["score"]), float(r["coverage_ok_rate"])),
+        reverse=True,
+    )
+    top_records = trial_records[:5]
+
+    print("Sweep ranking (coverage-constrained)")
+    print(f"Coverage constraint: coverage_ok_rate >= {coverage_floor * 100:.2f}%")
+    print(
+        "profile      trial_id  full_called%  pct_gate  pct_full  mean_cost   p95_ms  coverage_ok%   score  params"
+    )
+    if not top_records:
+        print("(no trials passed coverage constraint)")
+        print("")
+        return
+    for rec in top_records:
+        params_json = json.dumps(rec["params"], sort_keys=True, separators=(",", ":"))
+        print(
+            f"{str(rec['profile']):<12} {str(rec['trial_id']):<8} "
+            f"{fmt_pct(float(rec['full_called_rate'])):>11}  {fmt_pct(float(rec['pct_gate'])):>8}  "
+            f"{fmt_pct(float(rec['pct_full'])):>8}  {float(rec['mean_cost']):>9.2f}  "
+            f"{float(rec['p95_latency']):>7.2f}  {fmt_pct(float(rec['coverage_ok_rate'])):>11}  "
+            f"{float(rec['score']):>6.4f}  {params_json}"
+        )
+    print("")
+    print("Baseline staged reference")
+    print(
+        f"full_called={fmt_pct(baseline_staged['full_called_rate'])}, "
+        f"mean_cost={baseline_staged['mean_cost']:.2f}, "
+        f"p95={baseline_staged['p95_latency']:.2f}, "
+        f"coverage_ok={fmt_pct(baseline_staged['coverage_ok_rate'])}"
+    )
+    print(
+        "Score weights: 0.45*full_called_reduction_vs_staged + "
+        "0.35*cost_improvement_vs_staged + 0.20*p95_improvement_vs_staged"
+    )
+    _ = baseline_full
+
+
 def main() -> None:
     args = parse_args()
     if not args.jsonl_path.exists():
@@ -217,6 +332,15 @@ def main() -> None:
 
     print(f"Input: {args.jsonl_path}")
     print("")
+
+    has_sweep_trials = any(
+        get_trial_from_row(rows[0]) is not None
+        for mode, rows in rows_by_mode.items()
+        if is_kora_mode(mode) and rows
+    )
+    if has_sweep_trials:
+        print_sweep_top5(rows_by_mode=rows_by_mode, stats=stats)
+        return
 
     for profile in sorted(kora_profiles):
         profile_mode = f"kora_adaptive:{profile}"

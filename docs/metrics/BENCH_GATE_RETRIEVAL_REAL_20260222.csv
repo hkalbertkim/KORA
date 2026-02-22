@@ -1,0 +1,7 @@
+scenario,mode,n,terminal_full_rate,retrieval_hit_rate,mean_time_ms,p95_time_ms,mean_tokens_out
+exact_repeat,baseline,10,1.0000,0.0000,3315.00,3828.00,132.10
+exact_repeat,retrieval,10,0.1000,0.9000,1750.50,2877.00,70.70
+minor_variations,baseline,10,1.0000,0.0000,4071.60,5085.00,204.50
+minor_variations,retrieval,10,1.0000,0.0000,4553.60,7155.00,223.60
+mixed,baseline,10,1.0000,0.0000,3597.20,4878.00,143.40
+mixed,retrieval,10,0.6000,0.4000,2886.00,4303.00,131.40

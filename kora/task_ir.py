@@ -96,6 +96,7 @@ class AdaptiveRoutingPolicy(BaseModel):
     self_consistency_max_tokens: int = 64
     self_consistency_min_next_cost: float = 200.0
     self_consistency_min_remaining_budget: float = 500.0
+    enable_gate_retrieval: bool = False
 
     def resolved(self) -> "AdaptiveRoutingPolicy":
         profile_defaults: dict[str, dict[str, Any]] = {

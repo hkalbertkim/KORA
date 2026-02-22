@@ -524,6 +524,160 @@ def test_gate_verifier_stage_detection_and_stop_reason() -> None:
     assert llm_events_full_escalation[-1]["meta"]["gate_verifier_ok"] is None
 
 
+def test_gate_retrieval_avoids_full_escalation() -> None:
+    from kora import executor as executor_module
+    from kora.retrieval import build_retrieval_key
+
+    class MockMiniAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "mini draft"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gate_retr", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    class MockGateAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "N/A"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gate_retr:gate", "model": "mock-gate", "confidence": 0.2},
+            }
+
+    class MockFullAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "full answer"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gate_retr:full", "model": "mock-full", "confidence": 0.95},
+            }
+
+    def _make_graph(question: str) -> TaskGraph:
+        return TaskGraph.model_validate(
+            {
+                "graph_id": "adaptive-gate-retrieval",
+                "version": "0.1",
+                "root": "task_llm",
+                "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+                "tasks": [
+                    {
+                        "id": "task_llm",
+                        "type": "llm.answer",
+                        "deps": [],
+                        "in": {},
+                        "run": {
+                            "kind": "llm",
+                            "spec": {
+                                "adapter": "mock_gate_retr",
+                                "input": {"question": question},
+                                "output_schema": {
+                                    "type": "object",
+                                    "required": ["status", "task_id", "answer"],
+                                },
+                            },
+                        },
+                        "verify": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                            "rules": [],
+                        },
+                        "policy": {
+                            "on_fail": "fail",
+                            "adaptive": {
+                                "min_confidence_to_stop": 0.85,
+                                "max_escalations": 2,
+                                "escalation_order": ["gate", "full"],
+                                "use_voi": False,
+                                "enable_gate_retrieval": True,
+                            },
+                        },
+                        "tags": [],
+                    }
+                ],
+            }
+        )
+
+    def _run_graph_with_question(question: str) -> dict[str, Any]:
+        graph = _make_graph(question)
+        normalized = normalize_graph(graph)
+        validate_graph(normalized)
+
+        old_mini = executor_module._AdapterRegistry.providers.get("mock_gate_retr")
+        old_gate = executor_module._AdapterRegistry.providers.get("mock_gate_retr:gate")
+        old_full = executor_module._AdapterRegistry.providers.get("mock_gate_retr:full")
+        executor_module._AdapterRegistry.providers["mock_gate_retr"] = MockMiniAdapter
+        executor_module._AdapterRegistry.providers["mock_gate_retr:gate"] = MockGateAdapter
+        executor_module._AdapterRegistry.providers["mock_gate_retr:full"] = MockFullAdapter
+        try:
+            return run_graph(normalized)
+        finally:
+            if old_mini is None:
+                del executor_module._AdapterRegistry.providers["mock_gate_retr"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gate_retr"] = old_mini
+            if old_gate is None:
+                del executor_module._AdapterRegistry.providers["mock_gate_retr:gate"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gate_retr:gate"] = old_gate
+            if old_full is None:
+                del executor_module._AdapterRegistry.providers["mock_gate_retr:full"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gate_retr:full"] = old_full
+
+    executor_module.GATE_RETRIEVAL_STORE.clear()
+    try:
+        # Hit case: retrieval contains valid answer for the exact task key.
+        retrieval_key_hit = build_retrieval_key("llm.answer", {"question": "gate-retrieval-hit-q"}, None)
+        executor_module.GATE_RETRIEVAL_STORE.put(
+            retrieval_key_hit,
+            {"status": "ok", "task_id": "task_llm", "answer": "retrieved verified answer"},
+        )
+        hit_result = _run_graph_with_question("gate-retrieval-hit-q")
+        hit_events = [e for e in hit_result["events"] if e.get("task_id") == "task_llm"]
+        assert hit_events[-1]["meta"]["adapter"] == "mock_gate_retr:gate"
+        assert hit_events[-1]["meta"]["stop_reason"] == "accepted_gate_retrieval"
+        assert hit_events[-1]["meta"]["gate_retrieval_hit"] is True
+
+        # Miss case: input differs, retrieval key misses, so it escalates to full.
+        miss_result = _run_graph_with_question("gate-retrieval-miss-q")
+        miss_events = [e for e in miss_result["events"] if e.get("task_id") == "task_llm"]
+        assert miss_events[-1]["meta"]["adapter"] == "mock_gate_retr:full"
+        assert miss_events[1]["meta"]["adapter"] == "mock_gate_retr:gate"
+        assert miss_events[1]["meta"]["stop_reason"] == "escalate_gate_retrieval_miss_or_invalid"
+        assert miss_events[1]["meta"]["gate_retrieval_hit"] is False
+    finally:
+        executor_module.GATE_RETRIEVAL_STORE.clear()
+
+
 def test_adaptive_low_confidence_voi_too_low_stops_without_escalation() -> None:
     from kora import executor as executor_module
 

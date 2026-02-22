@@ -13,6 +13,7 @@ from kora.adapters.base import BaseAdapter
 from kora.adapters.mock import MockAdapter
 from kora.adapters.openai_adapter import OpenAIAdapter, OpenAIFullAdapter, OpenAIMiniAdapter
 from kora.errors import ErrorType, KoraRuntimeError, Stage
+from kora.retrieval import InMemoryRetrievalStore, build_retrieval_key
 from kora.scheduler import get_task_map, topo_sort
 from kora.task_ir import Task, TaskGraph
 from kora.verification import verify_output
@@ -25,7 +26,10 @@ ADAPTIVE_META_KEYS: tuple[str, ...] = (
     "escalate_recommended",
     "stop_reason",
     "gate_verifier_ok",
+    "gate_retrieval_hit",
+    "gate_retrieval_key",
 )
+GATE_RETRIEVAL_STORE = InMemoryRetrievalStore()
 
 
 class _AdapterRegistry:
@@ -347,6 +351,14 @@ def _run_llm_task(
     return output, result
 
 
+def _task_retrieval_key(task: Task) -> str:
+    if task.run.kind != "llm":
+        return ""
+    adapter_input = dict(task.run.spec.input)
+    adapter_input.pop("skip_if", None)
+    return build_retrieval_key(task.type, adapter_input, task.tags or None)
+
+
 def _resolve_escalation_adapter(base_adapter_name: str, stage_token: str) -> str | None:
     if stage_token in _AdapterRegistry.providers:
         return stage_token
@@ -380,6 +392,9 @@ def _gate_output_verifier_ok(task: Task, output: Any) -> bool:
             if isinstance(req, list):
                 required.update(str(k) for k in req)
         if any(key not in output for key in required):
+            return False
+        task_id = output.get("task_id")
+        if isinstance(task_id, str) and task_id != task.id:
             return False
 
         answer = output.get("answer")
@@ -753,12 +768,27 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                                 meta["escalate_recommended"] = False
                                 meta["stop_reason"] = "accepted_gate_verified"
                             else:
-                                if next_stage_token is not None:
-                                    meta["escalate_recommended"] = True
-                                    meta["stop_reason"] = "escalate_gate_verifier_failed"
-                                else:
+                                if next_stage_token is None:
                                     meta["escalate_recommended"] = False
                                     meta["stop_reason"] = "gate_verifier_failed_no_next_stage"
+                                elif adaptive is not None and adaptive.enable_gate_retrieval:
+                                    retrieval_key = _task_retrieval_key(task)
+                                    meta["gate_retrieval_key"] = retrieval_key[:12]
+                                    retrieved_output = GATE_RETRIEVAL_STORE.get(retrieval_key)
+                                    if isinstance(retrieved_output, (dict, str)) and _gate_output_verifier_ok(
+                                        task, retrieved_output
+                                    ):
+                                        output = retrieved_output
+                                        meta["gate_retrieval_hit"] = True
+                                        meta["escalate_recommended"] = False
+                                        meta["stop_reason"] = "accepted_gate_retrieval"
+                                    else:
+                                        meta["gate_retrieval_hit"] = False
+                                        meta["escalate_recommended"] = True
+                                        meta["stop_reason"] = "escalate_gate_retrieval_miss_or_invalid"
+                                else:
+                                    meta["escalate_recommended"] = True
+                                    meta["stop_reason"] = "escalate_gate_verifier_failed"
 
                         llm_events_for_attempt.append(
                             {

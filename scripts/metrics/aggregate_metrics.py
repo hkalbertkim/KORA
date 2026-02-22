@@ -236,12 +236,16 @@ def print_sweep_top5(
                 "mean_cost": s["mean_cost"],
                 "p95_latency": s["p95_latency"],
                 "coverage_ok_rate": s["coverage_ok_rate"],
+                "verify_ok_rate": s["verify_ok_rate"],
+                "quality_ok_rate": s["quality_ok_rate"],
+                "p50_latency": s["p50_latency"],
+                "p99_latency": s["p99_latency"],
                 "score": score,
                 "params": params if isinstance(params, dict) else {},
             }
         )
 
-    def _print_tier_table(tier_label: str, coverage_drop_points: float) -> None:
+    def _print_tier_table(tier_label: str, coverage_drop_points: float) -> list[dict[str, object]]:
         coverage_floor = baseline_3stage["coverage_ok_rate"] - coverage_drop_points
         tier_records = [
             rec
@@ -262,7 +266,7 @@ def print_sweep_top5(
         if not top_records:
             print("(no trials passed coverage constraint)")
             print("")
-            return
+            return []
         for rec in top_records:
             params_json = json.dumps(rec["params"], sort_keys=True, separators=(",", ":"))
             print(
@@ -273,8 +277,9 @@ def print_sweep_top5(
                 f"{float(rec['score']):>6.4f}  {params_json}"
             )
         print("")
+        return top_records
 
-    _print_tier_table("Tier-1 Top-5 (<=5%p coverage drop)", 0.05)
+    tier1_top5 = _print_tier_table("Tier-1 Top-5 (<=5%p coverage drop)", 0.05)
     _print_tier_table("Tier-2 Top-5 (<=2%p coverage drop)", 0.02)
 
     print("Baseline 3stage reference")
@@ -295,6 +300,33 @@ def print_sweep_top5(
         "Score weights: 0.45*full_called_reduction_vs_baseline_3stage + "
         "0.35*cost_improvement_vs_baseline_3stage + 0.20*p95_improvement_vs_baseline_3stage"
     )
+
+    export_path = Path("artifacts/metrics/best_configs.json")
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    best_configs = []
+    for rec in tier1_top5[:3]:
+        best_configs.append(
+            {
+                "profile": rec["profile"],
+                "trial_id": rec["trial_id"],
+                "score": round(float(rec["score"]), 6),
+                "params": rec["params"],
+                "metrics": {
+                    "full_called_rate": rec["full_called_rate"],
+                    "pct_gate": rec["pct_gate"],
+                    "pct_full": rec["pct_full"],
+                    "mean_cost": rec["mean_cost"],
+                    "p50_latency": rec["p50_latency"],
+                    "p95_latency": rec["p95_latency"],
+                    "p99_latency": rec["p99_latency"],
+                    "verify_ok_rate": rec["verify_ok_rate"],
+                    "quality_ok_rate": rec["quality_ok_rate"],
+                    "coverage_ok_rate": rec["coverage_ok_rate"],
+                },
+            }
+        )
+    export_path.write_text(json.dumps(best_configs, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"Saved Top-3 Tier-1 configs: {export_path}")
 
 
 def main() -> None:

@@ -169,6 +169,46 @@ def generate_sweep_trials(
     return trial_map
 
 
+def load_config_trials(config_path: Path) -> dict[str, list[dict[str, object]]]:
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        items = raw.get("configs")
+        if not isinstance(items, list):
+            raise ValueError("Config file dict must contain a list under 'configs'")
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        raise ValueError("Config file must be a JSON list or an object with 'configs'")
+
+    trial_map: dict[str, list[dict[str, object]]] = {}
+    for idx, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Config entry #{idx} must be an object")
+        profile = item.get("profile")
+        trial_id = item.get("trial_id") or item.get("id") or f"cfg{idx:02d}"
+        params = item.get("params")
+        if not isinstance(profile, str) or not profile:
+            raise ValueError(f"Config entry #{idx} missing profile")
+        if not isinstance(trial_id, str) or not trial_id:
+            raise ValueError(f"Config entry #{idx} missing trial_id")
+        if not isinstance(params, dict):
+            raise ValueError(f"Config entry #{idx} missing params dict")
+        required = {
+            "voi_threshold",
+            "mini_full_threshold",
+            "gate_full_threshold",
+            "budget_scale",
+            "allow_self_consistency",
+        }
+        missing = [k for k in required if k not in params]
+        if missing:
+            raise ValueError(f"Config entry #{idx} missing params keys: {', '.join(missing)}")
+        trial_map.setdefault(profile, []).append({"trial_id": trial_id, "params": params})
+    return trial_map
+
+
 def _simulate_kora_adaptive(
     req: RequestParams,
     profile: str,
@@ -361,6 +401,12 @@ def parse_args() -> argparse.Namespace:
         help="Trials per profile when --sweep is enabled.",
     )
     parser.add_argument(
+        "--config-file",
+        type=Path,
+        default=None,
+        help="JSON file with explicit kora trial configs. Overrides random sweep generation.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -382,11 +428,15 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     workload = generate_request_params(n=args.n, seed=args.seed)
-    sweep_trials_by_profile = (
-        generate_sweep_trials(profiles=profiles, seed=args.seed, sweep_trials=args.sweep_trials)
-        if args.sweep
-        else {}
-    )
+    if args.config_file:
+        sweep_trials_by_profile = load_config_trials(args.config_file)
+        profiles = sorted(sweep_trials_by_profile.keys())
+    else:
+        sweep_trials_by_profile = (
+            generate_sweep_trials(profiles=profiles, seed=args.seed, sweep_trials=args.sweep_trials)
+            if args.sweep
+            else {}
+        )
 
     with output_path.open("w", encoding="utf-8") as f:
         for req in workload:
@@ -401,7 +451,18 @@ def main() -> None:
                 )
                 f.write(json.dumps(result, sort_keys=True) + "\n")
             for profile in profiles:
-                if args.sweep:
+                if args.config_file:
+                    for trial in sweep_trials_by_profile.get(profile, []):
+                        result = simulate_mode(
+                            req=req,
+                            mode="kora_adaptive",
+                            profile=profile,
+                            trial_id=str(trial["trial_id"]),
+                            policy_params=dict(trial["params"]),
+                            seed=args.seed,
+                        )
+                        f.write(json.dumps(result, sort_keys=True) + "\n")
+                elif args.sweep:
                     for trial in sweep_trials_by_profile[profile]:
                         result = simulate_mode(
                             req=req,

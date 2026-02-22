@@ -95,6 +95,18 @@ type WarmDemoRuns = {
   warmed_run_id: string;
 };
 
+type DemoRunState = {
+  run_id: string | null;
+  recentStationEvents: RecentStationEvent[];
+  report: DemoReport;
+};
+
+const EMPTY_RUN_STATE: DemoRunState = {
+  run_id: null,
+  recentStationEvents: [],
+  report: {}
+};
+
 const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Output"];
 
 export default function App() {
@@ -108,8 +120,15 @@ export default function App() {
   const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
   const [recentStationEvents, setRecentStationEvents] = useState<RecentStationEvent[]>([]);
   const [warmDemoRuns, setWarmDemoRuns] = useState<WarmDemoRuns | null>(null);
+  const [baselineRun, setBaselineRun] = useState<DemoRunState>(EMPTY_RUN_STATE);
+  const [warmedRun, setWarmedRun] = useState<DemoRunState>(EMPTY_RUN_STATE);
   const [activeRunLabel, setActiveRunLabel] = useState<string>("none");
   const eventSourceRef = useRef<EventSource | null>(null);
+  const demoEventSourceRefs = useRef<{ baseline: EventSource | null; warmed: EventSource | null }>({
+    baseline: null,
+    warmed: null
+  });
+  const demoPendingCountRef = useRef(0);
 
   const fetchHistory = async () => {
     try {
@@ -157,42 +176,33 @@ export default function App() {
     };
   }, [history]);
 
-  const retrievalSummary = useMemo<RetrievalSummary>(() => {
-    const attempts = recentStationEvents.filter((event) => {
-      const reason = event.meta?.stop_reason ?? "";
-      return (
-        typeof event.meta?.gate_retrieval_hit === "boolean" ||
-        reason.startsWith("accepted_gate_") ||
-        reason.startsWith("escalate_gate_")
-      );
-    });
-    const hits = attempts.filter((event) => event.meta?.gate_retrieval_hit === true);
-    const acceptedGateRetrievalCount = recentStationEvents.filter(
-      (event) => event.meta?.stop_reason === "accepted_gate_retrieval"
-    ).length;
-    const acceptedGateVerifiedCount = recentStationEvents.filter(
-      (event) => event.meta?.stop_reason === "accepted_gate_verified"
-    ).length;
-    const last = recentStationEvents.length > 0 ? recentStationEvents[recentStationEvents.length - 1] : null;
-    const lastAdapter = last?.meta?.adapter ?? "";
-    const anyFullAdapter = recentStationEvents.some((event) => {
-      const adapter = event.meta?.adapter;
-      return typeof adapter === "string" && adapter.endsWith(":full");
-    });
-    const terminalFull =
-      anyFullAdapter || (typeof lastAdapter === "string" && lastAdapter.endsWith(":full"));
-    return {
-      retrieval_hit_rate: attempts.length > 0 ? hits.length / attempts.length : 0,
-      retrieval_attempts: attempts.length,
-      retrieval_hits: hits.length,
-      accepted_gate_retrieval_count: acceptedGateRetrievalCount,
-      accepted_gate_verified_count: acceptedGateVerifiedCount,
-      terminal_full: terminalFull,
-      terminal_full_rate: terminalFull ? 1 : 0
-    };
-  }, [recentStationEvents]);
+  const retrievalSummary = useMemo<RetrievalSummary>(
+    () => computeRetrievalSummary(recentStationEvents),
+    [recentStationEvents]
+  );
+  const baselineRetrievalSummary = useMemo<RetrievalSummary>(
+    () => computeRetrievalSummary(baselineRun.recentStationEvents),
+    [baselineRun.recentStationEvents]
+  );
+  const warmedRetrievalSummary = useMemo<RetrievalSummary>(
+    () => computeRetrievalSummary(warmedRun.recentStationEvents),
+    [warmedRun.recentStationEvents]
+  );
+
+  const closeComparisonStreams = () => {
+    if (demoEventSourceRefs.current.baseline) {
+      demoEventSourceRefs.current.baseline.close();
+      demoEventSourceRefs.current.baseline = null;
+    }
+    if (demoEventSourceRefs.current.warmed) {
+      demoEventSourceRefs.current.warmed.close();
+      demoEventSourceRefs.current.warmed = null;
+    }
+    demoPendingCountRef.current = 0;
+  };
 
   const streamRun = async (runId: string, runLabel: string) => {
+    closeComparisonStreams();
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -282,6 +292,88 @@ export default function App() {
     };
   };
 
+  const streamComparisonRun = (target: "baseline" | "warmed", runId: string) => {
+    const existing = demoEventSourceRefs.current[target];
+    if (existing) {
+      existing.close();
+      demoEventSourceRefs.current[target] = null;
+    }
+    const es = new EventSource(`/api/sse_run?run_id=${encodeURIComponent(runId)}`);
+    demoEventSourceRefs.current[target] = es;
+    let finalized = false;
+
+    const setRunState =
+      target === "baseline"
+        ? setBaselineRun
+        : setWarmedRun;
+
+    es.addEventListener("station", (ev) => {
+      try {
+        const parsed = JSON.parse((ev as MessageEvent<string>).data) as StationEvent;
+        const station = stageToStation(parsed.stage, parsed.skipped === true);
+        const meta = parsed.meta && typeof parsed.meta === "object" ? parsed.meta : undefined;
+        setRunState((prev) => {
+          const nextEvents = [
+            ...prev.recentStationEvents,
+            {
+              station,
+              stage: parsed.stage,
+              status: parsed.status,
+              time_ms: parsed.time_ms,
+              skipped: parsed.skipped,
+              tokens_in: parsed.tokens_in,
+              tokens_out: parsed.tokens_out,
+              meta
+            }
+          ];
+          return {
+            ...prev,
+            recentStationEvents: nextEvents.length > 200 ? nextEvents.slice(nextEvents.length - 200) : nextEvents
+          };
+        });
+      } catch {
+        // Ignore malformed payloads in demo mode.
+      }
+    });
+
+    es.addEventListener("summary", (ev) => {
+      try {
+        const parsed = JSON.parse((ev as MessageEvent<string>).data) as SummaryEvent;
+        setRunState((prev) => ({
+          ...prev,
+          report: {
+            ...prev.report,
+            ok: parsed.ok,
+            total_time_ms: parsed.total_time_ms,
+            total_llm_calls: parsed.total_llm_calls,
+            tokens_in: parsed.tokens_in,
+            tokens_out: parsed.tokens_out,
+            estimated_cost_usd: parsed.estimated_cost_usd
+          }
+        }));
+      } catch {
+        // Ignore malformed summary payloads in demo mode.
+      }
+    });
+
+    const finalize = () => {
+      if (finalized) return;
+      finalized = true;
+      es.close();
+      if (demoEventSourceRefs.current[target] === es) {
+        demoEventSourceRefs.current[target] = null;
+      }
+      demoPendingCountRef.current = Math.max(0, demoPendingCountRef.current - 1);
+      if (demoPendingCountRef.current === 0) {
+        setPlaying(false);
+        void fetchHistory();
+      }
+    };
+
+    es.addEventListener("done", finalize);
+    es.onerror = finalize;
+  };
+
   const runMode = async (mode: RunMode) => {
     try {
       const runRes = await fetch("/api/run", {
@@ -297,6 +389,8 @@ export default function App() {
         throw new Error("missing run_id");
       }
       setWarmDemoRuns(null);
+      setBaselineRun({ run_id: null, recentStationEvents: [], report: {} });
+      setWarmedRun({ run_id: null, recentStationEvents: [], report: {} });
       await streamRun(runData.run_id, mode);
     } catch {
       setPlaying(false);
@@ -308,6 +402,7 @@ export default function App() {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    closeComparisonStreams();
     setPlaying(true);
     try {
       const runRes = await fetch("/api/run_retrieval_warm_demo", { method: "POST" });
@@ -319,7 +414,20 @@ export default function App() {
         throw new Error("warm demo run ids missing");
       }
       setWarmDemoRuns(data);
-      await streamRun(data.baseline_run_id, "baseline");
+      setActiveRunLabel("compare");
+      setBaselineRun({
+        run_id: data.baseline_run_id,
+        recentStationEvents: [],
+        report: {}
+      });
+      setWarmedRun({
+        run_id: data.warmed_run_id,
+        recentStationEvents: [],
+        report: {}
+      });
+      demoPendingCountRef.current = 2;
+      streamComparisonRun("baseline", data.baseline_run_id);
+      streamComparisonRun("warmed", data.warmed_run_id);
     } catch {
       setPlaying(false);
     }
@@ -332,6 +440,7 @@ export default function App() {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      closeComparisonStreams();
     };
   }, []);
 
@@ -390,6 +499,103 @@ export default function App() {
         <MetricsPanel report={report} retrievalSummary={retrievalSummary} recentStationEvents={recentStationEvents} />
       </section>
 
+      {warmDemoRuns && (
+        <section className="card">
+          <h2>Retrieval Warm Compare</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>metric</th>
+                <th>baseline</th>
+                <th>warmed</th>
+                <th>delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>retrieval_hit_rate</td>
+                <td>
+                  {formatRateWithCount(
+                    baselineRetrievalSummary.retrieval_hit_rate,
+                    baselineRetrievalSummary.retrieval_hits,
+                    baselineRetrievalSummary.retrieval_attempts
+                  )}
+                </td>
+                <td>
+                  {formatRateWithCount(
+                    warmedRetrievalSummary.retrieval_hit_rate,
+                    warmedRetrievalSummary.retrieval_hits,
+                    warmedRetrievalSummary.retrieval_attempts
+                  )}
+                </td>
+                <td>
+                  {formatSignedPercent(
+                    warmedRetrievalSummary.retrieval_hit_rate - baselineRetrievalSummary.retrieval_hit_rate
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>accepted_gate_retrieval_count</td>
+                <td>{baselineRetrievalSummary.accepted_gate_retrieval_count}</td>
+                <td>{warmedRetrievalSummary.accepted_gate_retrieval_count}</td>
+                <td>
+                  {warmedRetrievalSummary.accepted_gate_retrieval_count -
+                    baselineRetrievalSummary.accepted_gate_retrieval_count}
+                </td>
+              </tr>
+              <tr>
+                <td>accepted_gate_verified_count</td>
+                <td>{baselineRetrievalSummary.accepted_gate_verified_count}</td>
+                <td>{warmedRetrievalSummary.accepted_gate_verified_count}</td>
+                <td>
+                  {warmedRetrievalSummary.accepted_gate_verified_count -
+                    baselineRetrievalSummary.accepted_gate_verified_count}
+                </td>
+              </tr>
+              <tr>
+                <td>terminal_full</td>
+                <td>{baselineRetrievalSummary.terminal_full ? "yes" : "no"}</td>
+                <td>{warmedRetrievalSummary.terminal_full ? "yes" : "no"}</td>
+                <td>
+                  {baselineRetrievalSummary.terminal_full ? "yes" : "no"} -&gt;{" "}
+                  {warmedRetrievalSummary.terminal_full ? "yes" : "no"}
+                </td>
+              </tr>
+              <tr>
+                <td>terminal_full_rate</td>
+                <td>{baselineRetrievalSummary.terminal_full_rate}</td>
+                <td>{warmedRetrievalSummary.terminal_full_rate}</td>
+                <td>
+                  {warmedRetrievalSummary.terminal_full_rate - baselineRetrievalSummary.terminal_full_rate}
+                </td>
+              </tr>
+              <tr>
+                <td>total_time_ms</td>
+                <td>{baselineRun.report.total_time_ms ?? "-"}</td>
+                <td>{warmedRun.report.total_time_ms ?? "-"}</td>
+                <td>
+                  {formatSignedNumber(
+                    (warmedRun.report.total_time_ms as number | undefined) ?? null,
+                    (baselineRun.report.total_time_ms as number | undefined) ?? null
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>tokens_out</td>
+                <td>{baselineRun.report.tokens_out ?? "-"}</td>
+                <td>{warmedRun.report.tokens_out ?? "-"}</td>
+                <td>
+                  {formatSignedNumber(
+                    (warmedRun.report.tokens_out as number | undefined) ?? null,
+                    (baselineRun.report.tokens_out as number | undefined) ?? null
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {comparison && (
         <section className="card">
           <h2>Direct vs KORA (Latest Pair)</h2>
@@ -404,6 +610,58 @@ export default function App() {
       )}
     </main>
   );
+}
+
+function computeRetrievalSummary(events: RecentStationEvent[]): RetrievalSummary {
+  const attempts = events.filter((event) => {
+    const reason = event.meta?.stop_reason ?? "";
+    return (
+      typeof event.meta?.gate_retrieval_hit === "boolean" ||
+      reason.startsWith("accepted_gate_") ||
+      reason.startsWith("escalate_gate_")
+    );
+  });
+  const hits = attempts.filter((event) => event.meta?.gate_retrieval_hit === true);
+  const acceptedGateRetrievalCount = events.filter(
+    (event) => event.meta?.stop_reason === "accepted_gate_retrieval"
+  ).length;
+  const acceptedGateVerifiedCount = events.filter(
+    (event) => event.meta?.stop_reason === "accepted_gate_verified"
+  ).length;
+  const last = events.length > 0 ? events[events.length - 1] : null;
+  const lastAdapter = last?.meta?.adapter ?? "";
+  const anyFullAdapter = events.some((event) => {
+    const adapter = event.meta?.adapter;
+    return typeof adapter === "string" && adapter.endsWith(":full");
+  });
+  const terminalFull = anyFullAdapter || (typeof lastAdapter === "string" && lastAdapter.endsWith(":full"));
+  return {
+    retrieval_hit_rate: attempts.length > 0 ? hits.length / attempts.length : 0,
+    retrieval_attempts: attempts.length,
+    retrieval_hits: hits.length,
+    accepted_gate_retrieval_count: acceptedGateRetrievalCount,
+    accepted_gate_verified_count: acceptedGateVerifiedCount,
+    terminal_full: terminalFull,
+    terminal_full_rate: terminalFull ? 1 : 0
+  };
+}
+
+function formatRateWithCount(rate: number, hits: number, attempts: number): string {
+  return `${(rate * 100).toFixed(1)}% (${hits}/${attempts})`;
+}
+
+function formatSignedPercent(value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${(value * 100).toFixed(1)}pp`;
+}
+
+function formatSignedNumber(next: number | null, base: number | null): string {
+  if (typeof next !== "number" || typeof base !== "number") {
+    return "-";
+  }
+  const delta = next - base;
+  const sign = delta >= 0 ? "+" : "";
+  return `${sign}${delta}`;
 }
 
 function stageToStation(stage: string, skipped: boolean): string {

@@ -213,11 +213,9 @@ def print_sweep_top5(
     rows_by_mode: dict[str, list[dict[str, object]]],
     stats: dict[str, dict[str, float]],
 ) -> None:
-    baseline_full = stats["baseline_full"]
     baseline_staged = stats["baseline_staged"]
-    coverage_floor = baseline_staged["coverage_ok_rate"] - 0.02
 
-    trial_records: list[dict[str, object]] = []
+    all_trial_records: list[dict[str, object]] = []
     for mode, rows in rows_by_mode.items():
         if not is_kora_mode(mode):
             continue
@@ -226,8 +224,6 @@ def print_sweep_top5(
         if not trial_id:
             continue
         s = stats[mode]
-        if s["coverage_ok_rate"] < coverage_floor:
-            continue
 
         full_called_reduction_vs_staged = lower_is_better_improvement(
             baseline_staged["full_called_rate"], s["full_called_rate"]
@@ -245,7 +241,7 @@ def print_sweep_top5(
         )
 
         params = rows[0].get("params")
-        trial_records.append(
+        all_trial_records.append(
             {
                 "profile": profile,
                 "trial_id": trial_id,
@@ -260,31 +256,42 @@ def print_sweep_top5(
             }
         )
 
-    trial_records.sort(
-        key=lambda r: (float(r["score"]), float(r["coverage_ok_rate"])),
-        reverse=True,
-    )
-    top_records = trial_records[:5]
-
-    print("Sweep ranking (coverage-constrained)")
-    print(f"Coverage constraint: coverage_ok_rate >= {coverage_floor * 100:.2f}%")
-    print(
-        "profile      trial_id  full_called%  pct_gate  pct_full  mean_cost   p95_ms  coverage_ok%   score  params"
-    )
-    if not top_records:
-        print("(no trials passed coverage constraint)")
-        print("")
-        return
-    for rec in top_records:
-        params_json = json.dumps(rec["params"], sort_keys=True, separators=(",", ":"))
-        print(
-            f"{str(rec['profile']):<12} {str(rec['trial_id']):<8} "
-            f"{fmt_pct(float(rec['full_called_rate'])):>11}  {fmt_pct(float(rec['pct_gate'])):>8}  "
-            f"{fmt_pct(float(rec['pct_full'])):>8}  {float(rec['mean_cost']):>9.2f}  "
-            f"{float(rec['p95_latency']):>7.2f}  {fmt_pct(float(rec['coverage_ok_rate'])):>11}  "
-            f"{float(rec['score']):>6.4f}  {params_json}"
+    def _print_tier_table(tier_label: str, coverage_drop_points: float) -> None:
+        coverage_floor = baseline_staged["coverage_ok_rate"] - coverage_drop_points
+        tier_records = [
+            rec
+            for rec in all_trial_records
+            if float(rec["coverage_ok_rate"]) >= coverage_floor
+        ]
+        tier_records.sort(
+            key=lambda r: (float(r["score"]), float(r["coverage_ok_rate"])),
+            reverse=True,
         )
-    print("")
+        top_records = tier_records[:5]
+
+        print(f"{tier_label} (coverage-constrained)")
+        print(f"Coverage constraint: coverage_ok_rate >= {coverage_floor * 100:.2f}%")
+        print(
+            "profile      trial_id  full_called%  pct_gate  pct_full  mean_cost   p95_ms  coverage_ok%   score  params"
+        )
+        if not top_records:
+            print("(no trials passed coverage constraint)")
+            print("")
+            return
+        for rec in top_records:
+            params_json = json.dumps(rec["params"], sort_keys=True, separators=(",", ":"))
+            print(
+                f"{str(rec['profile']):<12} {str(rec['trial_id']):<8} "
+                f"{fmt_pct(float(rec['full_called_rate'])):>11}  {fmt_pct(float(rec['pct_gate'])):>8}  "
+                f"{fmt_pct(float(rec['pct_full'])):>8}  {float(rec['mean_cost']):>9.2f}  "
+                f"{float(rec['p95_latency']):>7.2f}  {fmt_pct(float(rec['coverage_ok_rate'])):>11}  "
+                f"{float(rec['score']):>6.4f}  {params_json}"
+            )
+        print("")
+
+    _print_tier_table("Tier-1 Top-5 (<=5%p coverage drop)", 0.05)
+    _print_tier_table("Tier-2 Top-5 (<=2%p coverage drop)", 0.02)
+
     print("Baseline staged reference")
     print(
         f"full_called={fmt_pct(baseline_staged['full_called_rate'])}, "
@@ -296,7 +303,6 @@ def print_sweep_top5(
         "Score weights: 0.45*full_called_reduction_vs_staged + "
         "0.35*cost_improvement_vs_staged + 0.20*p95_improvement_vs_staged"
     )
-    _ = baseline_full
 
 
 def main() -> None:

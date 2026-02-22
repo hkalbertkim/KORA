@@ -26,6 +26,14 @@ type StationEvent = {
   skipped?: boolean;
   tokens_in?: number;
   tokens_out?: number;
+  meta?: {
+    stop_reason?: string;
+    gate_retrieval_hit?: boolean;
+    gate_retrieval_strategy?: string;
+    gate_verifier_ok?: boolean;
+    adapter?: string;
+    model?: string;
+  };
 };
 
 type SummaryEvent = {
@@ -54,6 +62,34 @@ type StationMetric = {
   tokens_out?: number;
 };
 
+type RecentStationEvent = {
+  station: string;
+  stage: string;
+  status: string;
+  time_ms: number;
+  skipped?: boolean;
+  tokens_in?: number;
+  tokens_out?: number;
+  meta?: {
+    stop_reason?: string;
+    gate_retrieval_hit?: boolean;
+    gate_retrieval_strategy?: string;
+    gate_verifier_ok?: boolean;
+    adapter?: string;
+    model?: string;
+  };
+};
+
+type RetrievalSummary = {
+  retrieval_hit_rate: number;
+  retrieval_attempts: number;
+  retrieval_hits: number;
+  accepted_gate_retrieval_count: number;
+  accepted_gate_verified_count: number;
+  terminal_full: boolean;
+  terminal_full_rate: number;
+};
+
 const STATIONS = ["Input", "Deterministic", "Decision", "Adapter", "Verify", "Output"];
 
 export default function App() {
@@ -65,6 +101,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [runSkippedLLM, setRunSkippedLLM] = useState(false);
   const [stationMetrics, setStationMetrics] = useState<Record<string, StationMetric>>({});
+  const [recentStationEvents, setRecentStationEvents] = useState<RecentStationEvent[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchHistory = async () => {
@@ -113,6 +150,41 @@ export default function App() {
     };
   }, [history]);
 
+  const retrievalSummary = useMemo<RetrievalSummary>(() => {
+    const attempts = recentStationEvents.filter((event) => {
+      const reason = event.meta?.stop_reason ?? "";
+      return (
+        typeof event.meta?.gate_retrieval_hit === "boolean" ||
+        reason.startsWith("accepted_gate_") ||
+        reason.startsWith("escalate_gate_")
+      );
+    });
+    const hits = attempts.filter((event) => event.meta?.gate_retrieval_hit === true);
+    const acceptedGateRetrievalCount = recentStationEvents.filter(
+      (event) => event.meta?.stop_reason === "accepted_gate_retrieval"
+    ).length;
+    const acceptedGateVerifiedCount = recentStationEvents.filter(
+      (event) => event.meta?.stop_reason === "accepted_gate_verified"
+    ).length;
+    const last = recentStationEvents.length > 0 ? recentStationEvents[recentStationEvents.length - 1] : null;
+    const lastAdapter = last?.meta?.adapter ?? "";
+    const anyFullAdapter = recentStationEvents.some((event) => {
+      const adapter = event.meta?.adapter;
+      return typeof adapter === "string" && adapter.endsWith(":full");
+    });
+    const terminalFull =
+      anyFullAdapter || (typeof lastAdapter === "string" && lastAdapter.endsWith(":full"));
+    return {
+      retrieval_hit_rate: attempts.length > 0 ? hits.length / attempts.length : 0,
+      retrieval_attempts: attempts.length,
+      retrieval_hits: hits.length,
+      accepted_gate_retrieval_count: acceptedGateRetrievalCount,
+      accepted_gate_verified_count: acceptedGateVerifiedCount,
+      terminal_full: terminalFull,
+      terminal_full_rate: terminalFull ? 1 : 0
+    };
+  }, [recentStationEvents]);
+
   const runMode = async (mode: RunMode) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -123,6 +195,7 @@ export default function App() {
     setTrace([]);
     setRunSkippedLLM(false);
     setStationMetrics({});
+    setRecentStationEvents([]);
     setReport({});
     try {
       const runRes = await fetch("/api/run", {
@@ -148,6 +221,7 @@ export default function App() {
             setRunSkippedLLM(true);
           }
           const station = stageToStation(parsed.stage, parsed.skipped === true);
+          const meta = parsed.meta && typeof parsed.meta === "object" ? parsed.meta : undefined;
           setTrace((prev) => [...prev, { station, t: prev.length }]);
           setStationMetrics((prev) => ({
             ...prev,
@@ -159,6 +233,22 @@ export default function App() {
               tokens_out: parsed.tokens_out
             }
           }));
+          setRecentStationEvents((prev) => {
+            const next = [
+              ...prev,
+              {
+                station,
+                stage: parsed.stage,
+                status: parsed.status,
+                time_ms: parsed.time_ms,
+                skipped: parsed.skipped,
+                tokens_in: parsed.tokens_in,
+                tokens_out: parsed.tokens_out,
+                meta
+              }
+            ];
+            return next.length > 200 ? next.slice(next.length - 200) : next;
+          });
           const next = stationIndexMap[station];
           if (typeof next === "number") {
             setActiveIndex(next);
@@ -250,7 +340,7 @@ export default function App() {
       </section>
 
       <section className="card">
-        <MetricsPanel report={report} />
+        <MetricsPanel report={report} retrievalSummary={retrievalSummary} recentStationEvents={recentStationEvents} />
       </section>
 
       {comparison && (

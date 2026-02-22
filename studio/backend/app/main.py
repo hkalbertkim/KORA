@@ -23,6 +23,14 @@ from kora.telemetry import summarize_run
 
 app = FastAPI(title="KORA Studio Backend", version="0.1.0")
 RUNS: dict[str, dict[str, Any]] = {}
+EVENT_META_WHITELIST = (
+    "stop_reason",
+    "gate_retrieval_hit",
+    "gate_retrieval_strategy",
+    "gate_verifier_ok",
+    "adapter",
+    "model",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -230,6 +238,10 @@ def run_demo(payload: RunRequest) -> dict[str, str]:
             error = event.get("error")
             if isinstance(error, dict):
                 normalized["error"] = error
+            meta_in = event.get("meta")
+            if isinstance(meta_in, dict):
+                meta_out = {k: meta_in.get(k) for k in EVENT_META_WHITELIST if k in meta_in}
+                normalized["meta"] = meta_out
             events.append(normalized)
     summary = summarize_run(result)
     RUNS[run_id] = {
@@ -290,6 +302,11 @@ async def sse_run(request: Request, run_id: str | None = None) -> StreamingRespo
                     payload_obj["tokens_in"] = int(usage.get("tokens_in", 0))
                 if "tokens_out" in usage:
                     payload_obj["tokens_out"] = int(usage.get("tokens_out", 0))
+            meta = event.get("meta")
+            if isinstance(meta, dict):
+                payload_obj["meta"] = meta
+            else:
+                payload_obj["meta"] = {}
             payload = json.dumps(payload_obj, separators=(",", ":"))
             yield f"event: station\ndata: {payload}\n\n"
             await asyncio.sleep(0.3)

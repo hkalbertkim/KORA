@@ -24,6 +24,7 @@ ADAPTIVE_META_KEYS: tuple[str, ...] = (
     "voi",
     "escalate_recommended",
     "stop_reason",
+    "gate_verifier_ok",
 )
 
 
@@ -361,6 +362,38 @@ def _stage_token_from_adapter_name(adapter_name: str) -> str:
     return adapter_name
 
 
+def _gate_output_verifier_ok(task: Task, output: Any) -> bool:
+    placeholders = ("n/a", "i don't know", "idk", "unknown", "tbd")
+
+    def _valid_text(value: str) -> bool:
+        text = value.strip()
+        if not text:
+            return False
+        lowered = text.lower()
+        return not any(token in lowered for token in placeholders)
+
+    if isinstance(output, dict):
+        required = {"status", "task_id"}
+        schema = task.run.spec.output_schema if task.run.kind == "llm" else {}
+        if isinstance(schema, dict):
+            req = schema.get("required")
+            if isinstance(req, list):
+                required.update(str(k) for k in req)
+        if any(key not in output for key in required):
+            return False
+
+        answer = output.get("answer")
+        if isinstance(answer, str):
+            return _valid_text(answer)
+        # If no explicit answer field, accept if required structure exists.
+        return True
+
+    if isinstance(output, str):
+        return _valid_text(output)
+
+    return False
+
+
 def _apply_adaptive_confidence_policy(
     adaptive: Any,
     task: Task,
@@ -543,6 +576,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                     escalation_order = list(adaptive.escalation_order) if adaptive is not None else []
                     escalation_step = 0
                     current_adapter = task.run.spec.adapter
+                    current_stage_token = _stage_token_from_adapter_name(current_adapter)
                     base_adapter_name = task.run.spec.adapter
                     llm_events_for_attempt: list[dict[str, Any]] = []
 
@@ -700,7 +734,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                         meta["cost_units"] = cost_units
 
                         if cost_units is not None:
-                            stage_token_key = _stage_token_from_adapter_name(current_adapter)
+                            stage_token_key = current_stage_token
                             old_est = stage_cost_estimates.get(stage_token_key, 1.0)
                             stage_cost_estimates[stage_token_key] = 0.3 * cost_units + (1.0 - 0.3) * old_est
 
@@ -711,6 +745,20 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
                             next_stage_token,
                             stage_cost_estimates,
                         )
+
+                        if current_stage_token == "gate":
+                            verifier_ok = _gate_output_verifier_ok(task, output)
+                            meta["gate_verifier_ok"] = verifier_ok
+                            if verifier_ok:
+                                meta["escalate_recommended"] = False
+                                meta["stop_reason"] = "accepted_gate_verified"
+                            else:
+                                if next_stage_token is not None:
+                                    meta["escalate_recommended"] = True
+                                    meta["stop_reason"] = "escalate_gate_verifier_failed"
+                                else:
+                                    meta["escalate_recommended"] = False
+                                    meta["stop_reason"] = "gate_verifier_failed_no_next_stage"
 
                         llm_events_for_attempt.append(
                             {
@@ -755,6 +803,7 @@ def run_graph(graph: TaskGraph) -> dict[str, Any]:
 
                         escalation_step += 1
                         current_adapter = next_adapter
+                        current_stage_token = stage_token
 
                     stage = Stage.VERIFY
                     verify_start = time.monotonic()

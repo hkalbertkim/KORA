@@ -241,6 +241,289 @@ def test_adaptive_confidence_escalates_through_adapter_order_until_confident() -
     assert llm_events[-1]["meta"]["stop_reason"] == "confident_enough"
 
 
+def test_gate_verifier_reduces_tail_full_within_coverage_budget() -> None:
+    from kora import executor as executor_module
+
+    class MockMiniAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "mini draft"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gatev", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    class MockFullAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "full answer"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gatev:full", "model": "mock-full", "confidence": 0.95},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-gate-verifier-impact",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_gatev",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "max_escalations": 2,
+                            "escalation_order": ["gate", "full"],
+                            "use_voi": False,
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+    normalized = normalize_graph(graph)
+    validate_graph(normalized)
+
+    def _run_batch(gate_answer: str, runs: int = 20) -> tuple[float, float]:
+        class MockGateAdapter(BaseAdapter):
+            def run(
+                self,
+                *,
+                task_id: str,
+                input: dict[str, Any],
+                budget: dict[str, Any],
+                output_schema: dict[str, Any],
+            ) -> dict[str, Any]:
+                del input, budget, output_schema
+                return {
+                    "ok": True,
+                    "output": {"status": "ok", "task_id": task_id, "answer": gate_answer},
+                    "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                    "meta": {"adapter": "mock_gatev:gate", "model": "mock-gate", "confidence": 0.2},
+                }
+
+        old_mini = executor_module._AdapterRegistry.providers.get("mock_gatev")
+        old_gate = executor_module._AdapterRegistry.providers.get("mock_gatev:gate")
+        old_full = executor_module._AdapterRegistry.providers.get("mock_gatev:full")
+        executor_module._AdapterRegistry.providers["mock_gatev"] = MockMiniAdapter
+        executor_module._AdapterRegistry.providers["mock_gatev:gate"] = MockGateAdapter
+        executor_module._AdapterRegistry.providers["mock_gatev:full"] = MockFullAdapter
+        try:
+            tail_full_count = 0
+            ok_count = 0
+            for _ in range(runs):
+                result = run_graph(normalized)
+                if result["ok"]:
+                    ok_count += 1
+                llm_events = [e for e in result["events"] if e.get("task_id") == "task_llm"]
+                if llm_events and llm_events[-1]["meta"].get("adapter") == "mock_gatev:full":
+                    tail_full_count += 1
+            return tail_full_count / float(runs), ok_count / float(runs)
+        finally:
+            if old_mini is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev"] = old_mini
+            if old_gate is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev:gate"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev:gate"] = old_gate
+            if old_full is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev:full"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev:full"] = old_full
+
+    baseline_tail_full, baseline_coverage = _run_batch("I don't know")
+    improved_tail_full, improved_coverage = _run_batch("gate verified answer")
+
+    assert improved_tail_full < baseline_tail_full
+    assert abs(improved_coverage - baseline_coverage) <= 0.02
+
+
+def test_gate_verifier_stage_detection_and_stop_reason() -> None:
+    from kora import executor as executor_module
+
+    class MockMiniAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "mini draft"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gatev", "model": "mock-mini", "confidence": 0.1},
+            }
+
+    class MockFullAdapter(BaseAdapter):
+        def run(
+            self,
+            *,
+            task_id: str,
+            input: dict[str, Any],
+            budget: dict[str, Any],
+            output_schema: dict[str, Any],
+        ) -> dict[str, Any]:
+            del input, budget, output_schema
+            return {
+                "ok": True,
+                "output": {"status": "ok", "task_id": task_id, "answer": "full answer"},
+                "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                "meta": {"adapter": "mock_gatev:full", "model": "mock-full", "confidence": 0.95},
+            }
+
+    graph = TaskGraph.model_validate(
+        {
+            "graph_id": "adaptive-gate-verifier-stage-detect",
+            "version": "0.1",
+            "root": "task_llm",
+            "defaults": {"budget": {"max_time_ms": 1500, "max_tokens": 300, "max_retries": 1}},
+            "tasks": [
+                {
+                    "id": "task_llm",
+                    "type": "llm.answer",
+                    "deps": [],
+                    "in": {},
+                    "run": {
+                        "kind": "llm",
+                        "spec": {
+                            "adapter": "mock_gatev",
+                            "input": {"question": "q"},
+                            "output_schema": {
+                                "type": "object",
+                                "required": ["status", "task_id", "answer"],
+                            },
+                        },
+                    },
+                    "verify": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["status", "task_id", "answer"],
+                        },
+                        "rules": [],
+                    },
+                    "policy": {
+                        "on_fail": "fail",
+                        "adaptive": {
+                            "min_confidence_to_stop": 0.85,
+                            "max_escalations": 2,
+                            "escalation_order": ["gate", "full"],
+                            "use_voi": False,
+                        },
+                    },
+                    "tags": [],
+                }
+            ],
+        }
+    )
+    normalized = normalize_graph(graph)
+    validate_graph(normalized)
+
+    def _run_once(gate_answer: str) -> dict[str, Any]:
+        class MockGateAdapter(BaseAdapter):
+            def run(
+                self,
+                *,
+                task_id: str,
+                input: dict[str, Any],
+                budget: dict[str, Any],
+                output_schema: dict[str, Any],
+            ) -> dict[str, Any]:
+                del input, budget, output_schema
+                return {
+                    "ok": True,
+                    "output": {"status": "ok", "task_id": task_id, "answer": gate_answer},
+                    "usage": {"time_ms": 1, "tokens_in": 1, "tokens_out": 1},
+                    "meta": {"adapter": "mock_gatev:gate", "model": "mock-gate", "confidence": 0.2},
+                }
+
+        old_mini = executor_module._AdapterRegistry.providers.get("mock_gatev")
+        old_gate = executor_module._AdapterRegistry.providers.get("mock_gatev:gate")
+        old_full = executor_module._AdapterRegistry.providers.get("mock_gatev:full")
+        executor_module._AdapterRegistry.providers["mock_gatev"] = MockMiniAdapter
+        executor_module._AdapterRegistry.providers["mock_gatev:gate"] = MockGateAdapter
+        executor_module._AdapterRegistry.providers["mock_gatev:full"] = MockFullAdapter
+        try:
+            return run_graph(normalized)
+        finally:
+            if old_mini is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev"] = old_mini
+            if old_gate is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev:gate"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev:gate"] = old_gate
+            if old_full is None:
+                del executor_module._AdapterRegistry.providers["mock_gatev:full"]
+            else:
+                executor_module._AdapterRegistry.providers["mock_gatev:full"] = old_full
+
+    # Subcase 1: terminal at gate, verifier passes, no full escalation.
+    result_gate_stop = _run_once("gate verified answer")
+    llm_events_gate_stop = [e for e in result_gate_stop["events"] if e.get("task_id") == "task_llm"]
+    assert llm_events_gate_stop[-1]["meta"]["adapter"] == "mock_gatev:gate"
+    assert llm_events_gate_stop[-1]["meta"]["stop_reason"] == "accepted_gate_verified"
+    assert llm_events_gate_stop[-1]["meta"]["gate_verifier_ok"] is True
+    assert llm_events_gate_stop[0]["meta"]["adapter"] == "mock_gatev"
+    assert llm_events_gate_stop[0]["meta"]["gate_verifier_ok"] is None
+
+    # Subcase 2: gate verifier fails and escalates to full.
+    result_full_escalation = _run_once("N/A")
+    llm_events_full_escalation = [e for e in result_full_escalation["events"] if e.get("task_id") == "task_llm"]
+    assert llm_events_full_escalation[-1]["meta"]["adapter"] == "mock_gatev:full"
+    assert llm_events_full_escalation[1]["meta"]["adapter"] == "mock_gatev:gate"
+    assert llm_events_full_escalation[1]["meta"]["stop_reason"] == "escalate_gate_verifier_failed"
+    assert llm_events_full_escalation[1]["meta"]["gate_verifier_ok"] is False
+    assert llm_events_full_escalation[-1]["meta"]["gate_verifier_ok"] is None
+
+
 def test_adaptive_low_confidence_voi_too_low_stops_without_escalation() -> None:
     from kora import executor as executor_module
 

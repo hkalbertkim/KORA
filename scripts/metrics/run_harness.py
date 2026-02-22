@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-BASELINE_MODES = ("baseline_full", "baseline_staged")
+BASELINE_MODES = ("baseline_full", "baseline_staged", "baseline_3stage")
 DEFAULT_PROFILES = ("balanced", "cost", "reliability", "latency")
 ALLOWED_PROFILES = set(DEFAULT_PROFILES)
 
@@ -97,7 +97,12 @@ def _stable_profile_bias(profile: str | None) -> int:
 
 
 def _mode_rng(seed: int, request_id: int, mode: str, profile: str | None) -> random.Random:
-    mode_bias_lookup = {"baseline_full": 0, "baseline_staged": 1, "kora_adaptive": 2}
+    mode_bias_lookup = {
+        "baseline_full": 0,
+        "baseline_staged": 1,
+        "baseline_3stage": 2,
+        "kora_adaptive": 3,
+    }
     mode_bias = mode_bias_lookup[mode] * 1543
     profile_bias = _stable_profile_bias(profile) * 17
     return random.Random(seed * 100_003 + request_id * 97 + mode_bias + profile_bias)
@@ -245,6 +250,25 @@ def simulate_mode(
         total_cost_units += req.mini_cost_units
         total_latency_ms += req.mini_latency_ms
         if req.mini_conf < 0.85:
+            stages_called.append("full")
+            total_cost_units += req.full_cost_units
+            total_latency_ms += req.full_latency_ms
+    elif mode == "baseline_3stage":
+        stages_called.append("mini")
+        total_cost_units += req.mini_cost_units
+        total_latency_ms += req.mini_latency_ms
+        gate_called = False
+        if req.mini_conf < 0.90:
+            gate_called = True
+            stages_called.append("gate")
+            total_cost_units += req.gate_cost_units
+            total_latency_ms += req.gate_latency_ms
+
+        if gate_called and req.gate_conf < 0.90:
+            stages_called.append("full")
+            total_cost_units += req.full_cost_units
+            total_latency_ms += req.full_latency_ms
+        elif not gate_called and req.mini_conf < 0.80:
             stages_called.append("full")
             total_cost_units += req.full_cost_units
             total_latency_ms += req.full_latency_ms

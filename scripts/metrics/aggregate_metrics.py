@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 
-BASELINE_MODES = ("baseline_full", "baseline_staged")
+BASELINE_MODES = ("baseline_full", "baseline_staged", "baseline_3stage")
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -76,22 +76,10 @@ def compute_stats(rows: list[dict[str, object]]) -> dict[str, float]:
     latencies_full = [float(r["total_latency_ms"]) for r in rows if bool(r["full_called"])]
     latencies_no_full = [float(r["total_latency_ms"]) for r in rows if not bool(r["full_called"])]
 
-    pct_mini = safe_div(
-        sum(1 for r in rows if "mini" in r.get("stages_called", [])),
-        n,
-    )
-    pct_gate = safe_div(
-        sum(1 for r in rows if "gate" in r.get("stages_called", [])),
-        n,
-    )
-    pct_full = safe_div(
-        sum(1 for r in rows if "full" in r.get("stages_called", [])),
-        n,
-    )
-    avg_num_stages_called = safe_div(
-        sum(len(r.get("stages_called", [])) for r in rows),
-        n,
-    )
+    pct_mini = safe_div(sum(1 for r in rows if "mini" in r.get("stages_called", [])), n)
+    pct_gate = safe_div(sum(1 for r in rows if "gate" in r.get("stages_called", [])), n)
+    pct_full = safe_div(sum(1 for r in rows if "full" in r.get("stages_called", [])), n)
+    avg_num_stages_called = safe_div(sum(len(r.get("stages_called", [])) for r in rows), n)
 
     return {
         "count": float(n),
@@ -132,8 +120,8 @@ def print_mode_table(stats: dict[str, dict[str, float]], mode_order: list[str]) 
 def print_delta_table(
     profile_mode: str,
     profile_stats: dict[str, float],
-    baseline_full: dict[str, float],
     baseline_staged: dict[str, float],
+    baseline_3stage: dict[str, float],
 ) -> None:
     metrics = [
         ("full_called_rate", "full_called%"),
@@ -153,24 +141,24 @@ def print_delta_table(
         "p99_latency",
     }
     print(f"Improvements for {profile_mode} (positive = better)")
-    print("metric             vs_baseline_full   vs_baseline_staged")
+    print("metric             vs_baseline_staged   vs_baseline_3stage")
     for key, label in metrics:
         if key in lower_is_better:
-            improvement_vs_full = safe_div(
-                baseline_full[key] - profile_stats[key], baseline_full[key]
-            )
             improvement_vs_staged = safe_div(
                 baseline_staged[key] - profile_stats[key], baseline_staged[key]
             )
-        else:
-            improvement_vs_full = safe_div(
-                profile_stats[key] - baseline_full[key], baseline_full[key]
+            improvement_vs_3stage = safe_div(
+                baseline_3stage[key] - profile_stats[key], baseline_3stage[key]
             )
+        else:
             improvement_vs_staged = safe_div(
                 profile_stats[key] - baseline_staged[key], baseline_staged[key]
             )
+            improvement_vs_3stage = safe_div(
+                profile_stats[key] - baseline_3stage[key], baseline_3stage[key]
+            )
         print(
-            f"{label:<18} {fmt_pct(improvement_vs_full):>16}   {fmt_pct(improvement_vs_staged):>18}"
+            f"{label:<18} {fmt_pct(improvement_vs_staged):>18}   {fmt_pct(improvement_vs_3stage):>18}"
         )
     print("")
 
@@ -205,15 +193,12 @@ def lower_is_better_improvement(baseline: float, profile_value: float) -> float:
     return safe_div(baseline - profile_value, baseline)
 
 
-def higher_is_better_improvement(baseline: float, profile_value: float) -> float:
-    return safe_div(profile_value - baseline, baseline)
-
-
 def print_sweep_top5(
     rows_by_mode: dict[str, list[dict[str, object]]],
     stats: dict[str, dict[str, float]],
 ) -> None:
     baseline_staged = stats["baseline_staged"]
+    baseline_3stage = stats["baseline_3stage"]
 
     all_trial_records: list[dict[str, object]] = []
     for mode, rows in rows_by_mode.items():
@@ -225,19 +210,19 @@ def print_sweep_top5(
             continue
         s = stats[mode]
 
-        full_called_reduction_vs_staged = lower_is_better_improvement(
-            baseline_staged["full_called_rate"], s["full_called_rate"]
+        full_called_reduction_vs_3stage = lower_is_better_improvement(
+            baseline_3stage["full_called_rate"], s["full_called_rate"]
         )
-        cost_improvement_vs_staged = lower_is_better_improvement(
-            baseline_staged["mean_cost"], s["mean_cost"]
+        cost_improvement_vs_3stage = lower_is_better_improvement(
+            baseline_3stage["mean_cost"], s["mean_cost"]
         )
-        p95_improvement_vs_staged = lower_is_better_improvement(
-            baseline_staged["p95_latency"], s["p95_latency"]
+        p95_improvement_vs_3stage = lower_is_better_improvement(
+            baseline_3stage["p95_latency"], s["p95_latency"]
         )
         score = (
-            0.45 * full_called_reduction_vs_staged
-            + 0.35 * cost_improvement_vs_staged
-            + 0.20 * p95_improvement_vs_staged
+            0.45 * full_called_reduction_vs_3stage
+            + 0.35 * cost_improvement_vs_3stage
+            + 0.20 * p95_improvement_vs_3stage
         )
 
         params = rows[0].get("params")
@@ -257,7 +242,7 @@ def print_sweep_top5(
         )
 
     def _print_tier_table(tier_label: str, coverage_drop_points: float) -> None:
-        coverage_floor = baseline_staged["coverage_ok_rate"] - coverage_drop_points
+        coverage_floor = baseline_3stage["coverage_ok_rate"] - coverage_drop_points
         tier_records = [
             rec
             for rec in all_trial_records
@@ -292,6 +277,13 @@ def print_sweep_top5(
     _print_tier_table("Tier-1 Top-5 (<=5%p coverage drop)", 0.05)
     _print_tier_table("Tier-2 Top-5 (<=2%p coverage drop)", 0.02)
 
+    print("Baseline 3stage reference")
+    print(
+        f"full_called={fmt_pct(baseline_3stage['full_called_rate'])}, "
+        f"mean_cost={baseline_3stage['mean_cost']:.2f}, "
+        f"p95={baseline_3stage['p95_latency']:.2f}, "
+        f"coverage_ok={fmt_pct(baseline_3stage['coverage_ok_rate'])}"
+    )
     print("Baseline staged reference")
     print(
         f"full_called={fmt_pct(baseline_staged['full_called_rate'])}, "
@@ -300,8 +292,8 @@ def print_sweep_top5(
         f"coverage_ok={fmt_pct(baseline_staged['coverage_ok_rate'])}"
     )
     print(
-        "Score weights: 0.45*full_called_reduction_vs_staged + "
-        "0.35*cost_improvement_vs_staged + 0.20*p95_improvement_vs_staged"
+        "Score weights: 0.45*full_called_reduction_vs_baseline_3stage + "
+        "0.35*cost_improvement_vs_baseline_3stage + 0.20*p95_improvement_vs_baseline_3stage"
     )
 
 
@@ -333,8 +325,8 @@ def main() -> None:
     for mode, rows in rows_by_mode.items():
         stats[mode] = compute_stats(rows)
 
-    baseline_full = stats["baseline_full"]
     baseline_staged = stats["baseline_staged"]
+    baseline_3stage = stats["baseline_3stage"]
 
     print(f"Input: {args.jsonl_path}")
     print("")
@@ -353,7 +345,7 @@ def main() -> None:
         if profile_mode not in stats:
             continue
         print(f"Profile: {profile}")
-        mode_order = ["baseline_full", "baseline_staged", profile_mode]
+        mode_order = ["baseline_full", "baseline_staged", "baseline_3stage", profile_mode]
         print_mode_table(stats, mode_order)
         print("")
         print_sanity_table(stats, mode_order)
@@ -361,8 +353,8 @@ def main() -> None:
         print_delta_table(
             profile_mode=profile_mode,
             profile_stats=stats[profile_mode],
-            baseline_full=baseline_full,
             baseline_staged=baseline_staged,
+            baseline_3stage=baseline_3stage,
         )
 
 

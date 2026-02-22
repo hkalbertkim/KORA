@@ -13,3 +13,8 @@ logs/debug/
 logs/experiments/
 *experiment*.json
 studio/backend/.venv_tmp/
+artifacts/*.jsonl
+artifacts/*.json
+artifacts/metrics/best_configs.json
+artifacts/metrics/best_configs*.json
+docs/metrics/*.jsonl

@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .reuse import ExactReuse
-from .three_system import deterministic_work, execute_case
+from .three_system import execute_case
 from .worker import WorkerError, digest, encoded
 
 
@@ -166,18 +166,18 @@ class Comparison:
                         fixture = copy.deepcopy(original)
                         if options["changed"]:
                             structured = fixture["structured_input"]
+                            expected = fixture["expected_deterministic_output"]
+                            # Update the fixed oracle, never call the implementation
+                            # under test to manufacture its own expected result.
                             if fixture.get("deterministic_operation") == "clean-orders":
                                 structured["rows"][0]["quantity"] += 1
+                                expected["orders"][0]["quantity"] += 1
+                                increment = expected["orders"][0]["unit_price"]
+                                expected["orders"][0]["total"] += increment
                             else:
                                 structured["quantity"] += 1
-                            fixture["expected_deterministic_output"] = (
-                                deterministic_work(
-                                    structured,
-                                    fixture.get(
-                                        "deterministic_operation", "arithmetic"
-                                    ),
-                                )
-                            )
+                                increment = structured["unit_price"]
+                            expected["total"] += increment
                             index = self.fixtures["cases"].index(original)
                             next_case = self.fixtures["cases"][
                                 (index + 1) % len(self.fixtures["cases"])

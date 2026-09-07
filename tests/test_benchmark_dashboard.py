@@ -230,3 +230,30 @@ def test_native_guard_rejects_stale_foreign_and_expired_leases():
             value["lease"]["lease_id"] = "other"
         with pytest.raises(WorkerError):
             validate_status(value, "lease", "project", "bench.service", now)
+
+
+def test_changed_input_does_not_generate_oracle_with_tested_function(
+    tmp_path, fake, monkeypatch
+):
+    monkeypatch.setattr(
+        three_system, "arithmetic", lambda value: {"total": 0, "currency": "KRW"}
+    )
+    app = Comparison(CONFIG, FIXTURES, tmp_path)
+    rid = app.submit(
+        {
+            "case": "billing-en",
+            "scenario": "D",
+            "reuse": False,
+            "changed": True,
+            "repetitions": 1,
+        }
+    )["id"]
+    for _ in range(100):
+        state = app.get(rid)
+        if state["status"] != "running":
+            break
+        time.sleep(0.02)
+    assert len(state["results"]) == 3
+    assert all(
+        r["status"] == "completed" and not r["quality_pass"] for r in state["results"]
+    )

@@ -118,3 +118,12 @@ repaired and subsequent samples saved incrementally. The interrupted attempt is
 recorded separately and is not silently counted as a successful full sample.
 The available browser rejected both private-loopback and isolated-preview navigation;
 visual QA remains unverified. No workaround bypassing browser policy was used.
+
+## Integration review — 2026-09-07
+
+Fixed a self-referential changed-input quality oracle: expected results no longer
+come from the deterministic implementation being tested. The changed fixed fixture
+updates its preregistered oracle independently. An injected wrong arithmetic result
+now fails all three comparison paths. Full regression749 passed; Ruff passed.
+Earlier changed-input passes alone were not independent correctness evidence;
+new runtime validation is recorded separately. No browser-policy bypass attempted.

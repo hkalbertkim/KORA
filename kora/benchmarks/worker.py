@@ -149,12 +149,15 @@ class ModelBackend:
 
 
 class Worker:
-    def __init__(self, worker_id, token, operations, capacity=1024):
+    def __init__(
+        self, worker_id, token, operations, capacity=1024, operation_identity=None
+    ):
         if not isinstance(token, str) or len(token) < 32:
             raise ValueError("worker token must have at least 32 characters")
         self.worker_id, self.token, self.operations = worker_id, token, operations
         self.boot_id, self.started = str(uuid.uuid4()), time.monotonic()
         self.capacity, self.jobs = capacity, {}
+        self.operation_identity = operation_identity or {}
         self.model_fault = False
         self.lock = threading.Lock()
 
@@ -167,6 +170,7 @@ class Worker:
             "operations": sorted(self.operations),
             "ledger_capacity": self.capacity,
             "model_fault": self.model_fault,
+            "operation_identity": self.operation_identity,
         }
 
     def execute(self, request):
@@ -326,12 +330,23 @@ def main():
         config = json.load(handle)
     token = os.environ["KORA_BENCHMARK_TOKEN"]
     # Fixture logic remains in the benchmark package, never in Core.
-    from .three_system import arithmetic
+    from .three_system import arithmetic, deterministic_work
 
-    operations = {"arithmetic": arithmetic}
+    operations = {
+        "arithmetic": arithmetic,
+        "clean-orders": lambda value: deterministic_work(value, "clean-orders"),
+    }
     if config.get("backend"):
         operations["model"] = ModelBackend(**config["backend"]).generate
-    worker = Worker(config["worker_id"], token, operations)
+    identity = {}
+    if config.get("backend"):
+        backend = config["backend"]
+        identity["model"] = {
+            "model": backend["model"],
+            "identity": backend["identity"],
+            "generation": backend["generation"],
+        }
+    worker = Worker(config["worker_id"], token, operations, operation_identity=identity)
     server = make_server(worker, config["port"])
     print(json.dumps(worker.health()), flush=True)
     server.serve_forever()

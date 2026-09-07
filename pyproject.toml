@@ -55,7 +55,7 @@ dev = [
 include = ["kora*"]
 
 [tool.setuptools.package-data]
-kora = ["solution/schemas/*.json", "studio_assets/*.css", "studio_assets/*.js"]
+kora = ["solution/schemas/*.json", "studio_assets/*.css", "studio_assets/*.js", "benchmarks/assets/*.html", "benchmarks/assets/*.css", "benchmarks/assets/*.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

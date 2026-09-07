@@ -23,6 +23,16 @@ def arithmetic(value):
     return {"total": value["quantity"] * value["unit_price"], "currency": "KRW"}
 
 
+def deterministic_work(value, operation="arithmetic"):
+    if operation == "arithmetic":
+        return arithmetic(value)
+    if operation == "clean-orders" and set(value) == {"rows"}:
+        from .reference_workload import clean_orders
+
+        return clean_orders(value["rows"])
+    raise WorkerError("unsupported-deterministic-operation")
+
+
 class Client:
     def __init__(self, url, token, worker_id):
         self.url, self.token, self.worker_id = url.rstrip("/"), token, worker_id
@@ -34,6 +44,7 @@ class Client:
         ):
             raise WorkerError("worker-identity-mismatch")
         self.boot_id = health["boot_id"]
+        self.health = health
 
     def run(self, job_id, operation, value):
         request = {
@@ -60,8 +71,11 @@ class Client:
         return result
 
 
-def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit):
+def execute_case(
+    system, config, fixture, system_prompt, scenario, run_id, emit, reuse=None
+):
     """Every outcome, including failed/unsupported runs, remains in the denominator."""
+    system_prompt = fixture.get("system_prompt", system_prompt)
     payload = {
         "text": fixture["text"],
         "structured_input": fixture["structured_input"],
@@ -86,6 +100,8 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
         if system == "h100"
         else "kora-workers",
     }
+    operation_name = fixture.get("deterministic_operation", "arithmetic")
+    pending_cache = []
     started = time.monotonic()
     sequence = 0
 
@@ -107,14 +123,16 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
     event("started")
     try:
         if system == "h100":
-            backend = ModelBackend(**config["backend"])
             # Fail before work on a mismatched model, even for the mixed baseline.
             if scenario != "D":
+                backend = ModelBackend(**config["backend"])
                 backend.health()
             deterministic = None
             if scenario in ("D", "W"):
                 node_start = time.monotonic()
-                deterministic = arithmetic(fixture["structured_input"])
+                deterministic = deterministic_work(
+                    fixture["structured_input"], operation_name
+                )
                 node = {
                     "worker_id": "native-client",
                     "activity": "deterministic",
@@ -153,7 +171,7 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
                 raise WorkerError("cluster-requires-distinct-workers")
             deterministic = model = None
             for operation, value, worker_cfg in [
-                ("arithmetic", fixture["structured_input"], deterministic_cfg),
+                (operation_name, fixture["structured_input"], deterministic_cfg),
                 (
                     "model",
                     {"system": system_prompt, "text": fixture["text"]},
@@ -161,12 +179,37 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
                 ),
             ]:
                 if (scenario == "D" and operation == "model") or (
-                    scenario == "M" and operation == "arithmetic"
+                    scenario == "M" and operation != "model"
                 ):
                     continue
                 client = Client(token=token, **worker_cfg)
                 event("node-started", node_id=operation, worker_id=client.worker_id)
-                node = client.run(run_id + ":" + operation, operation, value)
+                cache_key = None
+                if reuse is not None:
+                    cache_key = reuse.key(
+                        system,
+                        config,
+                        fixture,
+                        system_prompt,
+                        operation,
+                        value,
+                        client.health,
+                    )
+                node = (
+                    reuse.get(cache_key, run_id + ":" + operation)
+                    if cache_key
+                    else None
+                )
+                if node is None:
+                    node = client.run(run_id + ":" + operation, operation, value)
+                    if cache_key and node.get("status") == "completed":
+                        pending_cache.append((cache_key, node))
+                else:
+                    event(
+                        "node-reused",
+                        node_id=operation,
+                        source_job_id=node["source_job_id"],
+                    )
                 result["nodes"].append(node)
                 event(
                     "node-completed"
@@ -176,14 +219,18 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
                 )
                 if node["status"] != "completed":
                     raise WorkerError(node.get("error", "worker-failed"), 502)
-                if operation == "arithmetic":
+                if operation != "model":
                     deterministic = node["output"]
                 else:
                     model = node["output"]
         actual = dict(deterministic or {})
         if model:
             parsed = json.loads(model["text"])
-            if not isinstance(parsed, dict) or set(parsed) != {"category"}:
+            if not isinstance(parsed, dict) or set(parsed) != (
+                {"category", "reply"}
+                if fixture.get("model_contract") == "reply-v1"
+                else {"category"}
+            ):
                 raise WorkerError("quality-invalid-model-schema")
             actual.update(parsed)
         expected = {}
@@ -199,17 +246,31 @@ def execute_case(system, config, fixture, system_prompt, scenario, run_id, emit)
             exc.code if isinstance(exc, WorkerError) else "invalid-output-or-config"
         )
         event("failed", error=result["error"])
+    if result["quality_pass"] and reuse is not None:
+        for key, node in pending_cache:
+            reuse.put(key, node)
+    result["reused_nodes"] = sum(
+        n.get("activity") == "exact-reuse" for n in result["nodes"]
+    )
     result["model_calls_completed"] = sum(
         n.get("model_calls_completed", 0) for n in result["nodes"]
     )
     result["completion_tokens"] = sum(
-        n.get("output", {}).get("completion_tokens", 0) for n in result["nodes"]
+        n.get("output", {}).get("completion_tokens", 0)
+        for n in result["nodes"]
+        if n.get("activity") != "exact-reuse"
     )
     result["controller_elapsed_ms"] = (time.monotonic() - started) * 1000
     result["cluster_cooperation_observed"] = (
         system == "cluster"
         and scenario == "W"
-        and len({n["worker_id"] for n in result["nodes"] if n["status"] == "completed"})
+        and len(
+            {
+                n["worker_id"]
+                for n in result["nodes"]
+                if n["status"] == "completed" and n.get("activity") != "exact-reuse"
+            }
+        )
         == 2
     )
     event("finished", status=result["status"], quality_pass=result["quality_pass"])
